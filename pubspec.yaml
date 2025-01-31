@@ -40,9 +40,6 @@ dependencies:
   permission_handler: ^11.3.0
   geocoding: ^2.1.1
   http: ^1.2.0
-  url_launcher: ^6.2.5
-  flutter_typeahead: ^4.3.3
-  flutter_keyboard_visibility: ^5.4.1
 
 dev_dependencies:
   flutter_test:
