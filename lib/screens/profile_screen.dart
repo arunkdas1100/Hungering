@@ -175,16 +175,18 @@ class _ProfileScreenState extends State<ProfileScreen> with SingleTickerProvider
                         ],
                       ),
                       const SizedBox(height: 20),
-                      if (user?.photoURL != null)
-                        CircleAvatar(
+                      Hero(
+                        tag: 'profile_image',
+                        child: CircleAvatar(
                           radius: 50,
-                          backgroundImage: NetworkImage(user!.photoURL!),
-                        )
-                      else
-                        const CircleAvatar(
-                          radius: 50,
-                          child: Icon(Icons.person, size: 50),
+                          backgroundImage: user?.photoURL != null
+                              ? NetworkImage(user!.photoURL!)
+                              : null,
+                          child: user?.photoURL == null
+                              ? const Icon(Icons.person, size: 50)
+                              : null,
                         ),
+                      ),
                       const SizedBox(height: 16),
                       Text(
                         user?.displayName ?? 'User',
