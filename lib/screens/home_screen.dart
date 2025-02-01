@@ -10,6 +10,7 @@ import 'profile_screen.dart';
 import 'feed_screen.dart';
 import '../utils/animations.dart';
 import 'recipe_screen.dart';
+import '../widgets/donation_action_dialog.dart';
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
@@ -345,7 +346,37 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
                     child: ElevatedButton(
                       onPressed: () {
                         setState(() {
-                          _selectedIndex = 2;
+                          _selectedIndex = 1;
+                        });
+                        // Trigger the donation dialog in the next frame
+                        WidgetsBinding.instance.addPostFrameCallback((_) {
+                          if (mounted) {
+                            showDialog(
+                              context: context,
+                              builder: (context) => DonationActionDialog(
+                                onCreateNew: () {
+                                  Navigator.pop(context);
+                                  // Show create donation dialog
+                                  showDialog(
+                                    context: context,
+                                    builder: (context) => AlertDialog(
+                                      title: const Text('Create Donation'),
+                                      content: const Text('Donation creation form will be implemented here.'),
+                                      actions: [
+                                        TextButton(
+                                          onPressed: () => Navigator.pop(context),
+                                          child: const Text('Close'),
+                                        ),
+                                      ],
+                                    ),
+                                  );
+                                },
+                                onManage: () {
+                                  Navigator.pop(context);
+                                },
+                              ),
+                            );
+                          }
                         });
                       },
                       style: ElevatedButton.styleFrom(
@@ -358,7 +389,7 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
                         elevation: 2,
                       ),
                       child: const Text(
-                        'Claim Food',
+                        'Donate Food',
                         style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
                       ),
                     ),
@@ -368,7 +399,7 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
                     child: ElevatedButton(
                       onPressed: () {
                         setState(() {
-                          _selectedIndex = 1;
+                          _selectedIndex = 2; // Switch to Request Screen
                         });
                       },
                       style: ElevatedButton.styleFrom(
@@ -381,7 +412,7 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
                         elevation: 2,
                       ),
                       child: const Text(
-                        'Post Surplus',
+                        'Claim Food',
                         style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
                       ),
                     ),
