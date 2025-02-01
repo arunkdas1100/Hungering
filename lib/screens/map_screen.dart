@@ -5,6 +5,7 @@ import 'package:permission_handler/permission_handler.dart';
 import 'package:geocoding/geocoding.dart';
 import 'package:http/http.dart' as http;
 import 'dart:convert';
+import 'package:firebase_auth/firebase_auth.dart';
 
 const kGoogleApiKey = "AIzaSyA5wfaEXqzrxeTzv0dKfd3XQtNy1f0wfCs";
 final homeScaffoldKey = GlobalKey<ScaffoldState>();
@@ -23,6 +24,7 @@ class _MapScreenState extends State<MapScreen> {
   final Set<Marker> _markers = {};
   bool _isLoading = true;
   final _searchController = TextEditingController();
+  final user = FirebaseAuth.instance.currentUser;
   
   // Example food locations (replace with real data from your backend)
   final List<Map<String, dynamic>> _foodLocations = [
@@ -75,15 +77,35 @@ class _MapScreenState extends State<MapScreen> {
 
   Future<void> _getCurrentLocation() async {
     try {
+      LocationPermission permission = await Geolocator.checkPermission();
+      if (permission == LocationPermission.denied) {
+        permission = await Geolocator.requestPermission();
+        if (permission == LocationPermission.denied) {
+          return;
+        }
+      }
+
       Position position = await Geolocator.getCurrentPosition(
         desiredAccuracy: LocationAccuracy.high,
       );
+
       setState(() {
         _currentPosition = position;
         _isLoading = false;
       });
+
+      if (_mapController != null) {
+        _mapController!.animateCamera(
+          CameraUpdate.newCameraPosition(
+            CameraPosition(
+              target: LatLng(position.latitude, position.longitude),
+              zoom: 15,
+            ),
+          ),
+        );
+      }
     } catch (e) {
-      debugPrint('Error getting location: $e');
+      print("Error getting location: $e");
       setState(() {
         _isLoading = false;
       });
@@ -167,142 +189,140 @@ class _MapScreenState extends State<MapScreen> {
 
   @override
   Widget build(BuildContext context) {
-    if (_isLoading) {
-      return const Center(child: CircularProgressIndicator());
-    }
-
     return Scaffold(
-      key: homeScaffoldKey,
-      body: Stack(
+      body: Column(
         children: [
-          GoogleMap(
-            initialCameraPosition: CameraPosition(
-              target: _currentPosition != null
-                  ? LatLng(_currentPosition!.latitude, _currentPosition!.longitude)
-                  : const LatLng(37.7749, -122.4194),
-              zoom: 14,
-            ),
-            onMapCreated: (controller) {
-              setState(() {
-                _mapController = controller;
-              });
-            },
-            markers: _markers,
-            myLocationEnabled: true,
-            myLocationButtonEnabled: true,
-            mapType: MapType.normal,
-            zoomControlsEnabled: true,
-          ),
-          Positioned(
-            top: 16,
-            left: 16,
-            right: 16,
+          // Welcome and Search Section
+          Container(
+            padding: const EdgeInsets.fromLTRB(16, 48, 16, 16),
+            color: Colors.white,
             child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Card(
-                  child: Padding(
-                    padding: const EdgeInsets.all(8.0),
-                    child: Row(
-                      children: [
-                        Expanded(
-                          child: TextField(
-                            controller: _searchController,
-                            decoration: const InputDecoration(
-                              hintText: 'Search location...',
-                              border: InputBorder.none,
-                              contentPadding: EdgeInsets.symmetric(horizontal: 16),
-                            ),
-                            onSubmitted: (_) => _searchLocation(),
-                          ),
-                        ),
-                        IconButton(
-                          icon: const Icon(Icons.search),
-                          onPressed: _searchLocation,
-                        ),
-                      ],
+                // Welcome Message
+                Text(
+                  'Welcome, ${user?.displayName?.split(' ')[0] ?? 'User'}',
+                  style: const TextStyle(
+                    fontSize: 24,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+                const Text(
+                  "Let's combat hunger together!",
+                  style: TextStyle(
+                    color: Colors.grey,
+                    fontSize: 14,
+                  ),
+                ),
+                const SizedBox(height: 16),
+                
+                // Search Bar
+                Container(
+                  decoration: BoxDecoration(
+                    color: Colors.grey[100],
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  child: TextField(
+                    controller: _searchController,
+                    decoration: InputDecoration(
+                      hintText: 'Search for food donations',
+                      prefixIcon: const Icon(Icons.search),
+                      border: InputBorder.none,
+                      contentPadding: const EdgeInsets.symmetric(
+                        horizontal: 16,
+                        vertical: 12,
+                      ),
+                      hintStyle: TextStyle(
+                        color: Colors.grey[500],
+                      ),
                     ),
                   ),
                 ),
                 const SizedBox(height: 8),
-                Card(
-                  child: Padding(
-                    padding: const EdgeInsets.all(8.0),
-                    child: SingleChildScrollView(
-                      scrollDirection: Axis.horizontal,
-                      child: Row(
-                        children: [
-                          _buildFilterChip('Community Fridges', true),
-                          _buildFilterChip('Food Banks', true),
-                          _buildFilterChip('Restaurants', true),
-                          _buildFilterChip('Donation Points', true),
-                        ],
+                Text(
+                  'Find nearby surplus food',
+                  style: TextStyle(
+                    color: Colors.grey[600],
+                    fontSize: 12,
+                  ),
+                ),
+              ],
+            ),
+          ),
+
+          // Map Section
+          Expanded(
+            child: Stack(
+              children: [
+                // Google Map
+                _isLoading
+                    ? const Center(child: CircularProgressIndicator())
+                    : GoogleMap(
+                        initialCameraPosition: CameraPosition(
+                          target: _currentPosition != null
+                              ? LatLng(_currentPosition!.latitude, _currentPosition!.longitude)
+                              : const LatLng(37.7749, -122.4194),
+                          zoom: 14,
+                        ),
+                        onMapCreated: (controller) {
+                          setState(() {
+                            _mapController = controller;
+                          });
+                        },
+                        markers: _markers,
+                        myLocationEnabled: true,
+                        myLocationButtonEnabled: true,
+                        mapType: MapType.normal,
+                        zoomControlsEnabled: true,
                       ),
-                    ),
+
+                // Bottom Buttons
+                Positioned(
+                  left: 16,
+                  right: 16,
+                  bottom: 16,
+                  child: Row(
+                    children: [
+                      Expanded(
+                        child: ElevatedButton(
+                          onPressed: () {
+                            // TODO: Implement claim food functionality
+                          },
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: Colors.white,
+                            foregroundColor: Colors.black,
+                            padding: const EdgeInsets.symmetric(vertical: 16),
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(8),
+                            ),
+                          ),
+                          child: const Text('Claim Food'),
+                        ),
+                      ),
+                      const SizedBox(width: 16),
+                      Expanded(
+                        child: ElevatedButton(
+                          onPressed: () {
+                            // TODO: Implement post surplus functionality
+                          },
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: Colors.black,
+                            foregroundColor: Colors.white,
+                            padding: const EdgeInsets.symmetric(vertical: 16),
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(8),
+                            ),
+                          ),
+                          child: const Text('Post Surplus'),
+                        ),
+                      ),
+                    ],
                   ),
                 ),
               ],
             ),
           ),
         ],
-      ),
-      floatingActionButton: Column(
-        mainAxisAlignment: MainAxisAlignment.end,
-        children: [
-          FloatingActionButton(
-            heroTag: 'add_location',
-            onPressed: () => _addNewLocation(),
-            child: const Icon(Icons.add_location),
-          ),
-          const SizedBox(height: 16),
-          FloatingActionButton(
-            heroTag: 'my_location',
-            onPressed: () => _goToMyLocation(),
-            child: const Icon(Icons.my_location),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Future<void> _goToMyLocation() async {
-    if (_currentPosition != null) {
-      _mapController?.animateCamera(
-        CameraUpdate.newCameraPosition(
-          CameraPosition(
-            target: LatLng(_currentPosition!.latitude, _currentPosition!.longitude),
-            zoom: 15,
-          ),
-        ),
-      );
-    }
-  }
-
-  void _addNewLocation() {
-    // TODO: Implement adding new food donation location
-    showDialog(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('Add New Location'),
-        content: const Text('This feature will be implemented soon!'),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text('OK'),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildFilterChip(String label, bool isActive) {
-    return Padding(
-      padding: const EdgeInsets.only(right: 8.0),
-      child: FilterChip(
-        label: Text(label),
-        selected: isActive,
-        onSelected: (bool selected) {
-          // TODO: Implement filter functionality
-        },
       ),
     );
   }

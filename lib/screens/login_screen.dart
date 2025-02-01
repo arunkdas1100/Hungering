@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:google_sign_in/google_sign_in.dart';
 import 'package:firebase_auth/firebase_auth.dart';
+import '../utils/animations.dart';
 import 'home_screen.dart';
 
 class LoginScreen extends StatefulWidget {
@@ -10,10 +11,34 @@ class LoginScreen extends StatefulWidget {
   State<LoginScreen> createState() => _LoginScreenState();
 }
 
-class _LoginScreenState extends State<LoginScreen> {
+class _LoginScreenState extends State<LoginScreen> with SingleTickerProviderStateMixin {
   final GoogleSignIn _googleSignIn = GoogleSignIn();
   final FirebaseAuth _auth = FirebaseAuth.instance;
   bool _isLoading = false;
+  late AnimationController _animationController;
+  late Animation<double> _fadeAnimation;
+
+  @override
+  void initState() {
+    super.initState();
+    _animationController = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 1000),
+    );
+
+    _fadeAnimation = CurvedAnimation(
+      parent: _animationController,
+      curve: Curves.easeOut,
+    );
+
+    _animationController.forward();
+  }
+
+  @override
+  void dispose() {
+    _animationController.dispose();
+    super.dispose();
+  }
 
   Future<void> _handleGoogleSignIn() async {
     try {
@@ -21,38 +46,28 @@ class _LoginScreenState extends State<LoginScreen> {
         _isLoading = true;
       });
       
-      // Trigger the Google Sign In process
       final GoogleSignInAccount? googleUser = await _googleSignIn.signIn();
       
       if (googleUser == null) {
-        // User canceled the sign-in
         return;
       }
 
-      // Obtain the auth details from the Google Sign In
       final GoogleSignInAuthentication googleAuth = await googleUser.authentication;
-
-      // Create a new credential for Firebase
       final credential = GoogleAuthProvider.credential(
         accessToken: googleAuth.accessToken,
         idToken: googleAuth.idToken,
       );
 
-      // Sign in to Firebase with the Google Auth credential
       final UserCredential userCredential = await _auth.signInWithCredential(credential);
       final User? user = userCredential.user;
 
       if (user != null && mounted) {
-        // Successfully signed in to Firebase
-        print('Signed in: ${user.displayName}');
-        
         Navigator.of(context).pushReplacement(
-          MaterialPageRoute(builder: (context) => const HomeScreen()),
+          PageRouteBuilders.fadeThrough(const HomeScreen()),
         );
       }
     } catch (error) {
       if (mounted) {
-        print('Sign in error: $error');
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(content: Text('Failed to sign in with Google')),
         );
@@ -76,38 +91,50 @@ class _LoginScreenState extends State<LoginScreen> {
             mainAxisAlignment: MainAxisAlignment.center,
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              const Text(
-                'Welcome to\nHunger App',
-                style: TextStyle(
-                  fontSize: 32,
-                  fontWeight: FontWeight.bold,
+              StaggeredSlideTransition(
+                animation: _fadeAnimation,
+                index: 0,
+                child: const Text(
+                  'Welcome to\nHunger App',
+                  style: TextStyle(
+                    fontSize: 32,
+                    fontWeight: FontWeight.bold,
+                  ),
+                  textAlign: TextAlign.center,
                 ),
-                textAlign: TextAlign.center,
               ),
               const SizedBox(height: 48),
               if (_isLoading)
-                const Center(child: CircularProgressIndicator())
+                StaggeredSlideTransition(
+                  animation: _fadeAnimation,
+                  index: 1,
+                  child: const Center(child: CircularProgressIndicator()),
+                )
               else
-                ElevatedButton.icon(
-                  onPressed: _handleGoogleSignIn,
-                  icon: Image.asset(
-                    'assets/google.png',
-                    height: 24,
-                    width: 24,
-                  ),
-                  label: const Text(
-                    'Sign in with Google',
-                    style: TextStyle(
-                      fontSize: 16,
-                      color: Colors.black87,
+                StaggeredSlideTransition(
+                  animation: _fadeAnimation,
+                  index: 1,
+                  child: ElevatedButton.icon(
+                    onPressed: _handleGoogleSignIn,
+                    icon: Image.asset(
+                      'assets/google.png',
+                      height: 24,
+                      width: 24,
                     ),
-                  ),
-                  style: ElevatedButton.styleFrom(
-                    padding: const EdgeInsets.symmetric(vertical: 16),
-                    backgroundColor: Colors.white,
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(8),
-                      side: BorderSide(color: Colors.grey.shade300),
+                    label: const Text(
+                      'Sign in with Google',
+                      style: TextStyle(
+                        fontSize: 16,
+                        color: Colors.black87,
+                      ),
+                    ),
+                    style: ElevatedButton.styleFrom(
+                      padding: const EdgeInsets.symmetric(vertical: 16),
+                      backgroundColor: Colors.white,
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(8),
+                        side: BorderSide(color: Colors.grey.shade300),
+                      ),
                     ),
                   ),
                 ),
