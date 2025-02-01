@@ -1,5 +1,5 @@
 buildscript {
-    ext.kotlin_version = '1.7.10'
+    ext.kotlin_version = '1.9.0'
     repositories {
         google()
         mavenCentral()
@@ -8,6 +8,7 @@ buildscript {
     dependencies {
         classpath 'com.android.tools.build:gradle:7.3.0'
         classpath "org.jetbrains.kotlin:kotlin-gradle-plugin:$kotlin_version"
+        classpath 'com.google.gms:google-services:4.4.0'
     }
 }
 
@@ -15,42 +16,6 @@ allprojects {
     repositories {
         google()
         mavenCentral()
-    }
-
-    afterEvaluate { project ->
-        if (project.hasProperty('android')) {
-            android {
-                switch (project.name) {
-                    case 'app':
-                        namespace "com.example.hunger_app"
-                        break
-                    case 'flutter_keyboard_visibility':
-                        namespace "com.jrai.flutter_keyboard_visibility"
-                        break
-                    case 'flutter_plugin_android_lifecycle':
-                        namespace "io.flutter.plugins.flutter_plugin_android_lifecycle"
-                        break
-                    case 'geolocator_android':
-                        namespace "com.baseflow.geolocator"
-                        break
-                    case 'google_maps_flutter_android':
-                        namespace "io.flutter.plugins.googlemaps"
-                        break
-                    case 'permission_handler_android':
-                        namespace "com.baseflow.permissionhandler"
-                        break
-                    case 'geocoding_android':
-                        namespace "com.baseflow.geocoding"
-                        break
-                    case 'url_launcher_android':
-                        namespace "io.flutter.plugins.urllauncher"
-                        break
-                    default:
-                        namespace "com.example.${project.name}"
-                        break
-                }
-            }
-        }
     }
 }
 

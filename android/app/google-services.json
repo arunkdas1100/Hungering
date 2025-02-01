@@ -1,0 +1,47 @@
+{
+  "project_info": {
+    "project_number": "456636180235",
+    "project_id": "foodloop-2f235",
+    "storage_bucket": "foodloop-2f235.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:456636180235:android:58fc3a93560e2383c4a40e",
+        "android_client_info": {
+          "package_name": "com.example.hunger_app"
+        }
+      },
+      "oauth_client": [
+        {
+          "client_id": "456636180235-o98c3jvresm7u8234fhtnrqregqfla1s.apps.googleusercontent.com",
+          "client_type": 1,
+          "android_info": {
+            "package_name": "com.example.hunger_app",
+            "certificate_hash": "52ada1b357ea7ed1d72fcf5dfd19fe9cda361414"
+          }
+        },
+        {
+          "client_id": "456636180235-rc4319qtc7jh7ejshel6fu79h6ish98p.apps.googleusercontent.com",
+          "client_type": 3
+        }
+      ],
+      "api_key": [
+        {
+          "current_key": "AIzaSyC6Q5gc2kHnvWu6K69BZDo_AUU4ChxBZLw"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": [
+            {
+              "client_id": "456636180235-rc4319qtc7jh7ejshel6fu79h6ish98p.apps.googleusercontent.com",
+              "client_type": 3
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
