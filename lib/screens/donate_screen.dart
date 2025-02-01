@@ -1,5 +1,8 @@
 import 'package:flutter/material.dart';
+import 'package:google_maps_flutter/google_maps_flutter.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
 import '../widgets/donation_action_dialog.dart';
+import '../widgets/donation_form_dialog.dart';
 
 class DonateScreen extends StatefulWidget {
   const DonateScreen({super.key});
@@ -11,40 +14,6 @@ class DonateScreen extends StatefulWidget {
 class _DonateScreenState extends State<DonateScreen> with SingleTickerProviderStateMixin {
   late AnimationController _animationController;
   late Animation<double> _fadeAnimation;
-
-  // Example donation data (replace with your actual data model)
-  final List<Map<String, dynamic>> _donations = [
-    {
-      'id': '1',
-      'title': 'Homemade Pizza',
-      'description': 'Fresh and hot, can serve 4 people',
-      'time': '2 hours ago',
-      'status': 'Active',
-    },
-    {
-      'id': '2',
-      'title': 'Surplus Vegetables',
-      'description': 'Fresh vegetables from local market',
-      'time': '5 hours ago',
-      'status': 'Active',
-    },
-  ];
-
-  void _showMainDonationOptions() {
-    showDialog(
-      context: context,
-      builder: (context) => DonationActionDialog(
-        onCreateNew: () {
-          Navigator.pop(context);
-          _createNewDonation();
-        },
-        onManage: () {
-          Navigator.pop(context);
-          // Already on the management screen
-        },
-      ),
-    );
-  }
 
   @override
   void initState() {
@@ -78,133 +47,146 @@ class _DonateScreenState extends State<DonateScreen> with SingleTickerProviderSt
   void _createNewDonation() {
     showDialog(
       context: context,
+      builder: (context) => const DonationFormDialog(),
+    ).then((success) {
+      if (success == true) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Donation created successfully!'),
+            backgroundColor: Colors.green,
+          ),
+        );
+      }
+    });
+  }
+
+  Future<void> _cancelDonation(String donationId) async {
+    try {
+      // TODO: Replace with actual user ID from your auth system
+      final userId = 'user123';
+      
+      // Show confirmation dialog
+      final shouldDelete = await showDialog<bool>(
+        context: context,
+        builder: (context) => AlertDialog(
+          title: const Text('Cancel Donation'),
+          content: const Text('Are you sure you want to cancel this donation? This action cannot be undone.'),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context, false),
+              child: const Text('No'),
+            ),
+            TextButton(
+              onPressed: () => Navigator.pop(context, true),
+              style: TextButton.styleFrom(
+                foregroundColor: Colors.red,
+              ),
+              child: const Text('Yes, Cancel'),
+            ),
+          ],
+        ),
+      );
+
+      if (shouldDelete != true) return;
+
+      print('Deleting donation: $donationId for user: $userId'); // Debug log
+
+      // Verify the donation exists before deleting
+      final donationRef = FirebaseFirestore.instance
+          .collection('donation')
+          .doc(userId)
+          .collection('user_donations')
+          .doc(donationId);
+
+      final donationDoc = await donationRef.get();
+      if (!donationDoc.exists) {
+        throw Exception('Donation not found');
+      }
+
+      // Delete the specific donation document
+      await donationRef.delete();
+
+      print('Donation deleted successfully'); // Debug log
+
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Donation cancelled successfully'),
+            backgroundColor: Colors.green,
+          ),
+        );
+      }
+    } catch (e) {
+      print('Error deleting donation: $e'); // Debug log
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Failed to cancel donation: ${e.toString()}'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+    }
+  }
+
+  void _showMainDonationOptions() {
+    showDialog(
+      context: context,
       builder: (context) => DonationActionDialog(
         onCreateNew: () {
           Navigator.pop(context);
-          // Show create donation dialog
-          showDialog(
-            context: context,
-            builder: (context) => AlertDialog(
-              title: const Text('Create Donation'),
-              content: const Text('Donation creation form will be implemented here.'),
-              actions: [
-                TextButton(
-                  onPressed: () => Navigator.pop(context),
-                  child: const Text('Close'),
-                ),
-              ],
-            ),
-          );
+          _createNewDonation();
         },
         onManage: () {
           Navigator.pop(context);
-          // Already on management screen
+          // Already on the management screen
         },
       ),
-    );
-  }
-
-  void _showDonationOptions(Map<String, dynamic> donation) {
-    showDialog(
-      context: context,
-      builder: (context) => Dialog(
-        backgroundColor: Colors.transparent,
-        child: TweenAnimationBuilder(
-          duration: const Duration(milliseconds: 300),
-          tween: Tween<double>(begin: 0, end: 1),
-          builder: (context, double value, child) {
-            return Transform.scale(
-              scale: value,
-              child: child,
-            );
-          },
-          child: Container(
-            padding: const EdgeInsets.all(20),
-            decoration: BoxDecoration(
-              color: Colors.white,
-              borderRadius: BorderRadius.circular(16),
-              boxShadow: [
-                BoxShadow(
-                  color: Colors.black.withOpacity(0.1),
-                  blurRadius: 10,
-                  spreadRadius: 2,
-                ),
-              ],
-            ),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Text(
-                  donation['title'],
-                  style: const TextStyle(
-                    fontSize: 20,
-                    fontWeight: FontWeight.bold,
-                  ),
-                ),
-                const SizedBox(height: 12),
-                Text(
-                  donation['description'],
-                  style: TextStyle(
-                    color: Colors.grey[600],
-                    fontSize: 14,
-                  ),
-                ),
-                const SizedBox(height: 24),
-                ElevatedButton.icon(
-                  onPressed: () {
-                    Navigator.pop(context);
-                    _callOffDonation(donation);
-                  },
-                  icon: const Icon(Icons.cancel_outlined),
-                  label: const Text('Call Off Donation'),
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: Colors.red,
-                    foregroundColor: Colors.white,
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 24,
-                      vertical: 12,
-                    ),
-                  ),
-                ),
-                const SizedBox(height: 12),
-                TextButton(
-                  onPressed: () => Navigator.pop(context),
-                  child: const Text('Close'),
-                ),
-              ],
-            ),
-          ),
-        ),
-      ),
-    );
-  }
-
-  void _callOffDonation(Map<String, dynamic> donation) {
-    // TODO: Implement donation cancellation
-    setState(() {
-      _donations.removeWhere((d) => d['id'] == donation['id']);
-    });
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text('Donation called off successfully')),
     );
   }
 
   @override
   Widget build(BuildContext context) {
+    // TODO: Replace with actual user ID from your auth system
+    final userId = 'user123';
+
     return Scaffold(
       appBar: AppBar(
         title: const Text('My Donations'),
-        actions: [
-          IconButton(
-            icon: const Icon(Icons.add),
-            onPressed: _createNewDonation,
-          ),
-        ],
       ),
-      body: FadeTransition(
-        opacity: _fadeAnimation,
-        child: _donations.isEmpty
-            ? Center(
+      body: StreamBuilder<QuerySnapshot>(
+        stream: FirebaseFirestore.instance
+            .collection('donation')
+            .doc(userId)
+            .collection('user_donations')
+            .orderBy('createdAt', descending: true)
+            .snapshots(),
+        builder: (context, snapshot) {
+          if (snapshot.hasError) {
+            return Center(
+              child: Text(
+                'Error: ${snapshot.error}',
+                style: const TextStyle(color: Colors.red),
+              ),
+            );
+          }
+
+          if (snapshot.connectionState == ConnectionState.waiting) {
+            return const Center(child: CircularProgressIndicator());
+          }
+
+          final donations = snapshot.data?.docs.map((doc) {
+            final data = doc.data() as Map<String, dynamic>;
+            return {
+              'id': doc.id,
+              ...data,
+            };
+          }).toList() ?? [];
+
+          if (donations.isEmpty) {
+            return FadeTransition(
+              opacity: _fadeAnimation,
+              child: Center(
                 child: Column(
                   mainAxisAlignment: MainAxisAlignment.center,
                   children: [
@@ -215,111 +197,101 @@ class _DonateScreenState extends State<DonateScreen> with SingleTickerProviderSt
                     ),
                     const SizedBox(height: 16),
                     Text(
-                      'No active donations',
+                      'No donations yet',
                       style: TextStyle(
                         fontSize: 18,
                         color: Colors.grey[600],
                       ),
                     ),
                     const SizedBox(height: 8),
-                    ElevatedButton.icon(
-                      onPressed: _createNewDonation,
-                      icon: const Icon(Icons.add),
-                      label: const Text('Create Donation'),
+                    Text(
+                      'Tap the + button to create a donation',
+                      style: TextStyle(
+                        color: Colors.grey[600],
+                      ),
                     ),
                   ],
                 ),
-              )
-            : ListView.builder(
-                padding: const EdgeInsets.all(16),
-                itemCount: _donations.length,
-                itemBuilder: (context, index) {
-                  final donation = _donations[index];
-                  return TweenAnimationBuilder(
-                    duration: Duration(milliseconds: 400 + (index * 100)),
-                    tween: Tween<double>(begin: 0, end: 1),
-                    builder: (context, double value, child) {
-                      return Transform.translate(
-                        offset: Offset(0, 50 * (1 - value)),
-                        child: Opacity(
-                          opacity: value,
-                          child: child,
-                        ),
-                      );
-                    },
-                    child: Card(
-                      margin: const EdgeInsets.only(bottom: 12),
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(12),
-                      ),
-                      child: InkWell(
-                        onTap: () => _showDonationOptions(donation),
-                        borderRadius: BorderRadius.circular(12),
-                        child: Padding(
-                          padding: const EdgeInsets.all(16),
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Row(
-                                mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                                children: [
-                                  Expanded(
-                                    child: Text(
-                                      donation['title'],
-                                      style: const TextStyle(
-                                        fontSize: 18,
-                                        fontWeight: FontWeight.bold,
-                                      ),
-                                    ),
-                                  ),
-                                  Container(
-                                    padding: const EdgeInsets.symmetric(
-                                      horizontal: 8,
-                                      vertical: 4,
-                                    ),
-                                    decoration: BoxDecoration(
-                                      color: Colors.green.withOpacity(0.1),
-                                      borderRadius: BorderRadius.circular(8),
-                                    ),
-                                    child: Text(
-                                      donation['status'],
-                                      style: const TextStyle(
-                                        color: Colors.green,
-                                        fontSize: 12,
-                                        fontWeight: FontWeight.w500,
-                                      ),
-                                    ),
-                                  ),
-                                ],
-                              ),
-                              const SizedBox(height: 8),
-                              Text(
-                                donation['description'],
-                                style: TextStyle(
-                                  color: Colors.grey[600],
-                                  fontSize: 14,
-                                ),
-                              ),
-                              const SizedBox(height: 8),
-                              Text(
-                                donation['time'],
-                                style: TextStyle(
-                                  color: Colors.grey[500],
-                                  fontSize: 12,
-                                ),
-                              ),
-                            ],
+              ),
+            );
+          }
+
+          return FadeTransition(
+            opacity: _fadeAnimation,
+            child: ListView.builder(
+              padding: const EdgeInsets.all(16),
+              itemCount: donations.length,
+              itemBuilder: (context, index) {
+                final donation = donations[index];
+                final bool isActive = donation['status'] == 'Active';
+                
+                return Card(
+                  margin: const EdgeInsets.only(bottom: 16),
+                  child: Column(
+                    children: [
+                      ListTile(
+                        title: Text(
+                          donation['foodItem'],
+                          style: const TextStyle(
+                            fontWeight: FontWeight.bold,
                           ),
                         ),
+                        subtitle: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            const SizedBox(height: 4),
+                            Text('By: ${donation['donor']}'),
+                            Text('Quantity: ${donation['quantity']}'),
+                            Text('Price: ${donation['price']}'),
+                          ],
+                        ),
                       ),
-                    ),
-                  );
-                },
-              ),
+                      Padding(
+                        padding: const EdgeInsets.symmetric(horizontal: 16),
+                        child: Row(
+                          children: [
+                            const Icon(Icons.access_time, size: 16),
+                            const SizedBox(width: 4),
+                            Text(
+                              '${donation['startTime']} - ${donation['endTime']}',
+                              style: TextStyle(
+                                color: Colors.grey[600],
+                                fontSize: 12,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                      ButtonBar(
+                        children: [
+                          TextButton.icon(
+                            icon: const Icon(Icons.edit),
+                            label: const Text('Edit'),
+                            onPressed: () {
+                              // TODO: Implement edit functionality
+                            },
+                          ),
+                          TextButton.icon(
+                            icon: const Icon(Icons.delete),
+                            label: const Text('Cancel'),
+                            style: TextButton.styleFrom(
+                              foregroundColor: Colors.red,
+                            ),
+                            onPressed: () => _cancelDonation(donation['id']),
+                          ),
+                        ],
+                      ),
+                    ],
+                  ),
+                );
+              },
+            ),
+          );
+        },
       ),
       floatingActionButton: FloatingActionButton(
-        onPressed: _showMainDonationOptions,
-        child: const Icon(Icons.menu),
+        onPressed: _createNewDonation,
+        child: const Icon(Icons.add),
       ),
     );
   }
