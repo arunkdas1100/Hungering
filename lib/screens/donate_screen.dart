@@ -91,20 +91,26 @@ class _DonateScreenState extends State<DonateScreen> with SingleTickerProviderSt
 
       print('Deleting donation: $donationId for user: $userId'); // Debug log
 
-      // Verify the donation exists before deleting
-      final donationRef = FirebaseFirestore.instance
+      // Start a batch write
+      final batch = FirebaseFirestore.instance.batch();
+
+      // Create references
+      final userDonationRef = FirebaseFirestore.instance
           .collection('donation')
           .doc(userId)
           .collection('user_donations')
           .doc(donationId);
 
-      final donationDoc = await donationRef.get();
-      if (!donationDoc.exists) {
-        throw Exception('Donation not found');
-      }
+      final activeDonationRef = FirebaseFirestore.instance
+          .collection('active_donations')
+          .doc(donationId);
 
-      // Delete the specific donation document
-      await donationRef.delete();
+      // Delete from both collections
+      batch.delete(userDonationRef);
+      batch.delete(activeDonationRef);
+
+      // Commit the batch
+      await batch.commit();
 
       print('Donation deleted successfully'); // Debug log
 
@@ -229,6 +235,23 @@ class _DonateScreenState extends State<DonateScreen> with SingleTickerProviderSt
                   margin: const EdgeInsets.only(bottom: 16),
                   child: Column(
                     children: [
+                      // Add image at the top
+                      ClipRRect(
+                        borderRadius: const BorderRadius.vertical(top: Radius.circular(4)),
+                        child: Image.network(
+                          donation['imageUrl'] ?? 'https://cdn.pixabay.com/photo/2017/02/15/10/39/food-2068217_1280.jpg',
+                          height: 120,
+                          width: double.infinity,
+                          fit: BoxFit.cover,
+                          errorBuilder: (context, error, stackTrace) {
+                            return Container(
+                              height: 120,
+                              color: Colors.grey[200],
+                              child: const Icon(Icons.fastfood, size: 32, color: Colors.grey),
+                            );
+                          },
+                        ),
+                      ),
                       ListTile(
                         title: Text(
                           donation['foodItem'],

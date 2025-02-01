@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:google_maps_flutter/google_maps_flutter.dart';
 import 'package:geolocator/geolocator.dart';
@@ -11,6 +12,9 @@ import 'feed_screen.dart';
 import '../utils/animations.dart';
 import 'recipe_screen.dart';
 import '../widgets/donation_action_dialog.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
+import 'dart:math' show cos, sqrt, asin, log;
+import 'donation_details_screen.dart';
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
@@ -23,12 +27,17 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
   int _selectedIndex = 0;
   GoogleMapController? _mapController;
   Position? _currentPosition;
-  final Set<Marker> _markers = {};
+  Set<Marker> _markers = {};
   bool _isLoading = true;
   final _searchController = TextEditingController();
   final user = FirebaseAuth.instance.currentUser;
   late AnimationController _animationController;
   late Animation<double> _fadeAnimation;
+  final Completer<GoogleMapController> _controller = Completer();
+  Set<Circle> _circles = {};
+  LatLng? _currentLocation;
+  Timer? _refreshTimer;
+  final double _radiusInKm = 10.0;
 
   final List<Widget> _screens = [
     const FeedScreen(),
@@ -78,6 +87,11 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
 
     _initializeMap();
     _animationController.forward();
+    
+    // Refresh donations every 2 minutes instead of 1
+    _refreshTimer = Timer.periodic(const Duration(minutes: 2), (_) {
+      _fetchNearbyDonations();
+    });
   }
 
   Future<void> _initializeMap() async {
@@ -101,14 +115,6 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
 
   Future<void> _getCurrentLocation() async {
     try {
-      LocationPermission permission = await Geolocator.checkPermission();
-      if (permission == LocationPermission.denied) {
-        permission = await Geolocator.requestPermission();
-        if (permission == LocationPermission.denied) {
-          return;
-        }
-      }
-
       Position position = await Geolocator.getCurrentPosition(
         desiredAccuracy: LocationAccuracy.high,
       );
@@ -116,18 +122,32 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
       setState(() {
         _currentPosition = position;
         _isLoading = false;
+        _currentLocation = LatLng(position.latitude, position.longitude);
+        _circles = {
+          Circle(
+            circleId: const CircleId('radius'),
+            center: _currentLocation!,
+            radius: _radiusInKm * 1000, // Convert km to meters
+            fillColor: Colors.blue.withOpacity(0.1),
+            strokeColor: Colors.blue,
+            strokeWidth: 1,
+          ),
+        };
       });
 
       if (_mapController != null) {
+        // Calculate the zoom level based on the circle radius
+        final double zoomLevel = 14.5 - log(_radiusInKm) / log(2);
         _mapController!.animateCamera(
           CameraUpdate.newCameraPosition(
             CameraPosition(
-              target: LatLng(position.latitude, position.longitude),
-              zoom: 15,
+              target: _currentLocation!,
+              zoom: zoomLevel,
             ),
           ),
         );
       }
+      _fetchNearbyDonations();
     } catch (e) {
       print("Error getting location: $e");
       setState(() {
@@ -211,6 +231,280 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
         );
       }
     }
+  }
+
+  Future<void> _fetchNearbyDonations() async {
+    if (_currentLocation == null) {
+      print('Current location is null, skipping donation fetch');
+      return;
+    }
+
+    try {
+      final QuerySnapshot querySnapshot = await FirebaseFirestore.instance
+          .collection('active_donations')
+          .get();
+
+      if (!mounted) return;
+
+      Set<Marker> newMarkers = {};
+      
+      // Add current location marker
+      newMarkers.add(
+        Marker(
+          markerId: const MarkerId('current_location'),
+          position: _currentLocation!,
+          infoWindow: const InfoWindow(title: 'Your Location'),
+          icon: BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.hueAzure),
+          zIndex: 1,
+        ),
+      );
+
+      // Add donation markers
+      for (final doc in querySnapshot.docs) {
+        final data = doc.data() as Map<String, dynamic>;
+        if (data['location'] == null) continue;
+        
+        final location = data['location'] as Map<String, dynamic>;
+        if (location['latitude'] == null || location['longitude'] == null) continue;
+
+        final donationLocation = LatLng(
+          location['latitude'] as double,
+          location['longitude'] as double,
+        );
+
+        // Check if donation is within radius
+        final distance = _calculateDistance(_currentLocation!, donationLocation);
+        if (distance <= _radiusInKm) {
+          newMarkers.add(
+            Marker(
+              markerId: MarkerId(doc.id),
+              position: donationLocation,
+              icon: BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.hueGreen),
+              zIndex: 2,
+              onTap: () {
+                showModalBottomSheet(
+                  context: context,
+                  backgroundColor: Colors.transparent,
+                  builder: (context) => Container(
+                    margin: const EdgeInsets.all(16),
+                    decoration: BoxDecoration(
+                      color: Colors.white,
+                      borderRadius: BorderRadius.circular(16),
+                      boxShadow: [
+                        BoxShadow(
+                          color: Colors.black.withOpacity(0.1),
+                          blurRadius: 10,
+                          offset: const Offset(0, 5),
+                        ),
+                      ],
+                    ),
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        // Food Image
+                        ClipRRect(
+                          borderRadius: const BorderRadius.vertical(top: Radius.circular(16)),
+                          child: Hero(
+                            tag: 'food_image_${data['foodItem']}',
+                            child: Image.network(
+                              data['imageUrl'] ?? 'https://cdn.pixabay.com/photo/2017/02/15/10/39/food-2068217_1280.jpg',
+                              height: 150,
+                              width: double.infinity,
+                              fit: BoxFit.cover,
+                              errorBuilder: (context, error, stackTrace) {
+                                return Container(
+                                  height: 150,
+                                  color: Colors.grey[200],
+                                  child: const Icon(Icons.fastfood, size: 50, color: Colors.grey),
+                                );
+                              },
+                            ),
+                          ),
+                        ),
+                        Padding(
+                          padding: const EdgeInsets.all(16),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Row(
+                                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                                children: [
+                                  Expanded(
+                                    child: Hero(
+                                      tag: 'food_name_${data['foodItem']}',
+                                      child: Material(
+                                        color: Colors.transparent,
+                                        child: Text(
+                                          data['foodItem'],
+                                          style: const TextStyle(
+                                            fontSize: 20,
+                                            fontWeight: FontWeight.bold,
+                                          ),
+                                        ),
+                                      ),
+                                    ),
+                                  ),
+                                  Container(
+                                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                                    decoration: BoxDecoration(
+                                      color: data['price'] == 'Free' 
+                                          ? Colors.green.withOpacity(0.1)
+                                          : Theme.of(context).primaryColor.withOpacity(0.1),
+                                      borderRadius: BorderRadius.circular(20),
+                                    ),
+                                    child: Text(
+                                      data['price'],
+                                      style: TextStyle(
+                                        fontSize: 16,
+                                        fontWeight: FontWeight.bold,
+                                        color: data['price'] == 'Free' 
+                                            ? Colors.green 
+                                            : Theme.of(context).primaryColor,
+                                      ),
+                                    ),
+                                  ),
+                                ],
+                              ),
+                              const SizedBox(height: 8),
+                              Text(
+                                'By ${data['donor']}',
+                                style: TextStyle(
+                                  fontSize: 16,
+                                  color: Colors.grey[600],
+                                ),
+                              ),
+                              const SizedBox(height: 4),
+                              Text(
+                                '${data['quantity']} • ${data['startTime']} - ${data['endTime']}',
+                                style: TextStyle(
+                                  fontSize: 14,
+                                  color: Colors.grey[600],
+                                ),
+                              ),
+                              const SizedBox(height: 16),
+                              SizedBox(
+                                width: double.infinity,
+                                child: ElevatedButton(
+                                  onPressed: () {
+                                    Navigator.pop(context);
+                                    Navigator.push(
+                                      context,
+                                      MaterialPageRoute(
+                                        builder: (context) => DonationDetailsScreen(
+                                          donationId: doc.id,
+                                          donationData: data,
+                                        ),
+                                      ),
+                                    );
+                                  },
+                                  style: ElevatedButton.styleFrom(
+                                    padding: const EdgeInsets.symmetric(vertical: 12),
+                                    backgroundColor: Theme.of(context).primaryColor,
+                                    foregroundColor: Colors.white,
+                                    shape: RoundedRectangleBorder(
+                                      borderRadius: BorderRadius.circular(8),
+                                    ),
+                                  ),
+                                  child: const Text(
+                                    'View Details',
+                                    style: TextStyle(fontSize: 16),
+                                  ),
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                );
+              },
+            ),
+          );
+        }
+      }
+
+      if (mounted) {
+        setState(() {
+          _markers = newMarkers;
+        });
+      }
+    } catch (e) {
+      print('Error fetching donations: $e');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Error loading donations. Please try again.'),
+            duration: Duration(seconds: 2),
+          ),
+        );
+      }
+    }
+  }
+
+  // Calculate distance between two points in km
+  double _calculateDistance(LatLng point1, LatLng point2) {
+    var p = 0.017453292519943295; // Math.PI / 180
+    var c = cos;
+    var a = 0.5 -
+        c((point2.latitude - point1.latitude) * p) / 2 +
+        c(point1.latitude * p) *
+            c(point2.latitude * p) *
+            (1 - c((point2.longitude - point1.longitude) * p)) /
+            2;
+    return 12742 * asin(sqrt(a)); // 2 * R; R = 6371 km
+  }
+
+  void _showFullScreenMap() {
+    Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (context) => Scaffold(
+          appBar: AppBar(
+            title: const Text('Nearby Donations'),
+            leading: IconButton(
+              icon: const Icon(Icons.arrow_back),
+              onPressed: () => Navigator.pop(context),
+            ),
+          ),
+          body: GoogleMap(
+            initialCameraPosition: CameraPosition(
+              target: _currentLocation ?? const LatLng(0, 0),
+              zoom: 14.5,
+            ),
+            onMapCreated: (controller) {
+              controller.setMapStyle('''
+                [
+                  {
+                    "featureType": "poi",
+                    "elementType": "labels",
+                    "stylers": [{"visibility": "off"}]
+                  },
+                  {
+                    "featureType": "transit",
+                    "elementType": "labels",
+                    "stylers": [{"visibility": "off"}]
+                  }
+                ]
+              ''');
+              controller.animateCamera(
+                CameraUpdate.newLatLngZoom(
+                  _currentLocation!,
+                  14.5,
+                ),
+              );
+            },
+            markers: _markers,
+            circles: _circles,
+            myLocationEnabled: true,
+            myLocationButtonEnabled: true,
+            zoomControlsEnabled: true,
+            mapToolbarEnabled: false,
+            compassEnabled: true,
+            minMaxZoomPreference: const MinMaxZoomPreference(10, 18),
+          ),
+        ),
+      ),
+    );
   }
 
   Widget _buildHomeContent() {
@@ -307,28 +601,98 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
           StaggeredSlideTransition(
             animation: _fadeAnimation,
             index: 1,
-            child: Container(
-              height: 250,
-              padding: const EdgeInsets.symmetric(horizontal: 16),
-              child: ClipRRect(
-                borderRadius: BorderRadius.circular(16),
-                child: GoogleMap(
-                  initialCameraPosition: CameraPosition(
-                    target: _currentPosition != null
-                        ? LatLng(_currentPosition!.latitude, _currentPosition!.longitude)
-                        : const LatLng(37.7749, -122.4194),
-                    zoom: 14,
-                  ),
-                  onMapCreated: (controller) {
-                    setState(() {
-                      _mapController = controller;
-                    });
-                  },
-                  markers: _markers,
-                  myLocationEnabled: true,
-                  myLocationButtonEnabled: true,
-                  mapType: MapType.normal,
-                  zoomControlsEnabled: true,
+            child: GestureDetector(
+              onTap: _showFullScreenMap,
+              child: Container(
+                height: 250,
+                padding: const EdgeInsets.symmetric(horizontal: 16),
+                child: Stack(
+                  children: [
+                    ClipRRect(
+                      borderRadius: BorderRadius.circular(16),
+                      child: GoogleMap(
+                        initialCameraPosition: CameraPosition(
+                          target: _currentLocation ?? const LatLng(37.7749, -122.4194),
+                          zoom: 14.5,
+                        ),
+                        onMapCreated: (controller) {
+                          _controller.complete(controller);
+                          setState(() {
+                            _mapController = controller;
+                            // Apply custom map style to hide unnecessary elements
+                            controller.setMapStyle('''
+                              [
+                                {
+                                  "featureType": "poi",
+                                  "elementType": "labels",
+                                  "stylers": [{"visibility": "off"}]
+                                },
+                                {
+                                  "featureType": "transit",
+                                  "elementType": "labels",
+                                  "stylers": [{"visibility": "off"}]
+                                }
+                              ]
+                            ''');
+                          });
+                          // Initialize markers after map is created
+                          _fetchNearbyDonations();
+                        },
+                        markers: _markers,
+                        circles: _circles,
+                        myLocationEnabled: true,
+                        myLocationButtonEnabled: false,
+                        zoomControlsEnabled: false,
+                        mapToolbarEnabled: false,
+                        compassEnabled: false,
+                        tiltGesturesEnabled: false,
+                        rotateGesturesEnabled: false,
+                        zoomGesturesEnabled: false,
+                        scrollGesturesEnabled: false,
+                        mapType: MapType.normal,
+                        minMaxZoomPreference: const MinMaxZoomPreference(10, 18),
+                      ),
+                    ),
+                    // Add refresh and fullscreen buttons
+                    Positioned(
+                      right: 8,
+                      bottom: 8,
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          FloatingActionButton.small(
+                            onPressed: () async {
+                              setState(() {
+                                _isLoading = true;
+                              });
+                              await _getCurrentLocation();
+                              await _fetchNearbyDonations();
+                              setState(() {
+                                _isLoading = false;
+                              });
+                            },
+                            heroTag: 'refresh_map',
+                            child: _isLoading 
+                              ? const SizedBox(
+                                  width: 18,
+                                  height: 18,
+                                  child: CircularProgressIndicator(
+                                    color: Colors.white,
+                                    strokeWidth: 2,
+                                  ),
+                                )
+                              : const Icon(Icons.refresh),
+                          ),
+                          const SizedBox(height: 8),
+                          FloatingActionButton.small(
+                            onPressed: _showFullScreenMap,
+                            heroTag: 'fullscreen_map',
+                            child: const Icon(Icons.fullscreen),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
                 ),
               ),
             ),
@@ -422,7 +786,7 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
             ),
           ),
 
-          // Available Donations Section
+          // Available Donations Section with updated title
           StaggeredSlideTransition(
             animation: _fadeAnimation,
             index: 3,
@@ -431,36 +795,28 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  const Text(
-                    'Available Donations',
-                    style: TextStyle(
-                      fontSize: 20,
-                      fontWeight: FontWeight.bold,
-                    ),
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      const Text(
+                        "Available Donation's Near You",
+                        style: TextStyle(
+                          fontSize: 20,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                      if (_currentLocation != null)
+                        Text(
+                          'Within ${_radiusInKm.toStringAsFixed(1)} km',
+                          style: TextStyle(
+                            fontSize: 14,
+                            color: Colors.grey[600],
+                          ),
+                        ),
+                    ],
                   ),
                   const SizedBox(height: 16),
-                  SingleChildScrollView(
-                    scrollDirection: Axis.horizontal,
-                    child: Row(
-                      children: [
-                        _buildFoodProductCard(
-                          'Pizza Margherita',
-                          'Domino\'s Pizza',
-                          '₹199',
-                          'Fresh pizza, 2 hours old',
-                          'https://images.unsplash.com/photo-1513104890138-7c749659a591?ixlib=rb-4.0.3&ixid=M3wxMjA3fDB8MHxwaG90by1wYWdlfHx8fGVufDB8fHx8fA%3D%3D&auto=format&fit=crop&w=500&q=80',
-                        ),
-                        const SizedBox(width: 16),
-                        _buildFoodProductCard(
-                          'Chicken Biryani',
-                          'Paradise Restaurant',
-                          '₹150',
-                          'Surplus from lunch, 3 portions',
-                          'https://images.unsplash.com/photo-1589302168068-964664d93dc0?ixlib=rb-4.0.3&ixid=M3wxMjA3fDB8MHxwaG90by1wYWdlfHx8fGVufDB8fHx8fA%3D%3D&auto=format&fit=crop&w=500&q=80',
-                        ),
-                      ],
-                    ),
-                  ),
+                  _buildAvailableDonations(),
                 ],
               ),
             ),
@@ -653,106 +1009,221 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
     );
   }
 
-  Widget _buildFoodProductCard(String name, String restaurant, String price, String description, String imageUrl) {
+  Widget _buildAvailableDonations() {
+    return StreamBuilder<QuerySnapshot>(
+      stream: FirebaseFirestore.instance
+          .collection('active_donations')
+          .orderBy('createdAt', descending: true)
+          .limit(5)
+          .snapshots(),
+      builder: (context, snapshot) {
+        if (snapshot.hasError) {
+          return Center(
+            child: Text(
+              'Something went wrong',
+              style: TextStyle(color: Colors.grey[600]),
+            ),
+          );
+        }
+
+        if (snapshot.connectionState == ConnectionState.waiting) {
+          return const Center(
+            child: CircularProgressIndicator(),
+          );
+        }
+
+        final donations = snapshot.data?.docs ?? [];
+        
+        if (donations.isEmpty) {
+          return Center(
+            child: Column(
+              children: [
+                Icon(Icons.no_food, size: 48, color: Colors.grey[400]),
+                const SizedBox(height: 8),
+                Text(
+                  'No active donations nearby',
+                  style: TextStyle(color: Colors.grey[600]),
+                ),
+              ],
+            ),
+          );
+        }
+
+        return SizedBox(
+          height: 220, // Fixed height for the container
+          child: ListView.builder(
+            scrollDirection: Axis.horizontal,
+            physics: const BouncingScrollPhysics(),
+            itemCount: donations.length,
+            itemBuilder: (context, index) {
+              final doc = donations[index];
+              final data = doc.data() as Map<String, dynamic>;
+              return Padding(
+                padding: EdgeInsets.only(
+                  left: index == 0 ? 0 : 16,
+                  right: index == donations.length - 1 ? 0 : 0,
+                ),
+                child: _buildFoodDonationCard(doc.id, data),
+              );
+            },
+          ),
+        );
+      },
+    );
+  }
+
+  Widget _buildFoodDonationCard(String donationId, Map<String, dynamic> data) {
     return Container(
-      width: 200,
+      width: 180,
+      margin: const EdgeInsets.symmetric(vertical: 8),
       decoration: BoxDecoration(
         color: Colors.white,
-        borderRadius: BorderRadius.circular(12),
+        borderRadius: BorderRadius.circular(16),
         boxShadow: [
           BoxShadow(
             color: Colors.grey.withOpacity(0.1),
             spreadRadius: 1,
-            blurRadius: 5,
-            offset: const Offset(0, 2),
+            blurRadius: 8,
+            offset: const Offset(0, 4),
           ),
         ],
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
+          // Image Section
           Hero(
-            tag: 'food_image_$name',
-            child: ClipRRect(
-              borderRadius: const BorderRadius.vertical(top: Radius.circular(12)),
-              child: Image.network(
-                imageUrl,
-                height: 120,
-                width: double.infinity,
-                fit: BoxFit.cover,
+            tag: 'food_image_${data['foodItem']}',
+            child: Container(
+              height: 100,
+              decoration: BoxDecoration(
+                borderRadius: const BorderRadius.vertical(top: Radius.circular(16)),
+                image: DecorationImage(
+                  image: NetworkImage(
+                    data['imageUrl'] ?? 'https://cdn.pixabay.com/photo/2017/02/15/10/39/food-2068217_1280.jpg',
+                  ),
+                  fit: BoxFit.cover,
+                ),
               ),
             ),
           ),
-          Padding(
-            padding: const EdgeInsets.all(12),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Hero(
-                  tag: 'food_name_$name',
-                  child: Material(
-                    color: Colors.transparent,
-                    child: Text(
-                      name,
-                      style: const TextStyle(
-                        fontSize: 16,
-                        fontWeight: FontWeight.bold,
+
+          // Content Section
+          Expanded(
+            child: Padding(
+              padding: const EdgeInsets.all(12),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  // Title and Info
+                  Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Hero(
+                        tag: 'food_name_${data['foodItem']}',
+                        child: Material(
+                          color: Colors.transparent,
+                          child: Text(
+                            data['foodItem'],
+                            style: const TextStyle(
+                              fontSize: 16,
+                              fontWeight: FontWeight.bold,
+                            ),
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                        ),
                       ),
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                    ),
+                      const SizedBox(height: 4),
+                      Text(
+                        data['donor'],
+                        style: TextStyle(
+                          fontSize: 12,
+                          color: Colors.grey[600],
+                        ),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                      const SizedBox(height: 2),
+                      Text(
+                        data['quantity'],
+                        style: TextStyle(
+                          fontSize: 11,
+                          color: Colors.grey[500],
+                        ),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ],
                   ),
-                ),
-                const SizedBox(height: 4),
-                Text(
-                  restaurant,
-                  style: TextStyle(
-                    fontSize: 14,
-                    color: Colors.grey[600],
+
+                  // Price and Claim Button
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    crossAxisAlignment: CrossAxisAlignment.center,
+                    children: [
+                      Container(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 8,
+                          vertical: 4,
+                        ),
+                        decoration: BoxDecoration(
+                          color: data['price'] == 'Free' 
+                              ? Colors.green.withOpacity(0.1)
+                              : Theme.of(context).primaryColor.withOpacity(0.1),
+                          borderRadius: BorderRadius.circular(12),
+                        ),
+                        child: Text(
+                          data['price'],
+                          style: TextStyle(
+                            fontSize: 12,
+                            fontWeight: FontWeight.bold,
+                            color: data['price'] == 'Free' 
+                                ? Colors.green 
+                                : Theme.of(context).primaryColor,
+                          ),
+                        ),
+                      ),
+                      Material(
+                        color: Colors.transparent,
+                        child: InkWell(
+                          onTap: () {
+                            Navigator.push(
+                              context,
+                              MaterialPageRoute(
+                                builder: (context) => DonationDetailsScreen(
+                                  donationId: donationId,
+                                  donationData: data,
+                                ),
+                              ),
+                            );
+                          },
+                          borderRadius: BorderRadius.circular(12),
+                          child: Container(
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 12,
+                              vertical: 6,
+                            ),
+                            decoration: BoxDecoration(
+                              color: Theme.of(context).primaryColor,
+                              borderRadius: BorderRadius.circular(12),
+                            ),
+                            child: const Text(
+                              'Claim',
+                              style: TextStyle(
+                                color: Colors.white,
+                                fontSize: 12,
+                                fontWeight: FontWeight.bold,
+                              ),
+                            ),
+                          ),
+                        ),
+                      ),
+                    ],
                   ),
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                ),
-                const SizedBox(height: 4),
-                Text(
-                  description,
-                  style: TextStyle(
-                    fontSize: 12,
-                    color: Colors.grey[500],
-                  ),
-                  maxLines: 2,
-                  overflow: TextOverflow.ellipsis,
-                ),
-                const SizedBox(height: 8),
-                Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                  children: [
-                    Text(
-                      price,
-                      style: const TextStyle(
-                        fontSize: 16,
-                        fontWeight: FontWeight.bold,
-                        color: Colors.green,
-                      ),
-                    ),
-                    ElevatedButton(
-                      onPressed: () {
-                        // TODO: Implement claim functionality
-                      },
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: Colors.green,
-                        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-                        minimumSize: Size.zero,
-                        tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                      ),
-                      child: const Text(
-                        'Claim',
-                        style: TextStyle(fontSize: 12),
-                      ),
-                    ),
-                  ],
-                ),
-              ],
+                ],
+              ),
             ),
           ),
         ],
@@ -853,6 +1324,7 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
     _animationController.dispose();
     _mapController?.dispose();
     _searchController.dispose();
+    _refreshTimer?.cancel();
     super.dispose();
   }
 } 

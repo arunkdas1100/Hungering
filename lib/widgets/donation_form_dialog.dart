@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:google_maps_flutter/google_maps_flutter.dart';
 import 'package:geolocator/geolocator.dart';
+import 'package:http/http.dart' as http;
+import 'dart:convert';
 import './location_picker_dialog.dart';
 import '../services/firestore_service.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
@@ -29,6 +31,9 @@ class _DonationFormDialogState extends State<DonationFormDialog> {
   LatLng? _selectedLocation;
   bool _isLoading = false;
   GoogleMapController? _mapController;
+
+  final String _pixabayApiKey = '48590142-c8b8b7020e19f571b5c296fff';
+  String? _foodImageUrl;
 
   @override
   void dispose() {
@@ -63,6 +68,30 @@ class _DonationFormDialogState extends State<DonationFormDialog> {
     }
   }
 
+  Future<String?> _getFoodImage(String foodItem) async {
+    try {
+      final searchTerm = Uri.encodeComponent(foodItem);
+      final response = await http.get(
+        Uri.parse(
+          'https://pixabay.com/api/?key=$_pixabayApiKey&q=$searchTerm&image_type=photo&category=food&per_page=3&safesearch=true'
+        ),
+      );
+
+      if (response.statusCode == 200) {
+        final data = json.decode(response.body);
+        if (data['hits'] != null && data['hits'].isNotEmpty) {
+          return data['hits'][0]['largeImageURL'];
+        }
+      }
+      
+      // Fallback to a default food image
+      return 'https://cdn.pixabay.com/photo/2017/02/15/10/39/food-2068217_1280.jpg';
+    } catch (e) {
+      print('Error fetching image: $e');
+      return 'https://cdn.pixabay.com/photo/2017/02/15/10/39/food-2068217_1280.jpg';
+    }
+  }
+
   Future<void> _submitDonation() async {
     if (_formKey.currentState!.validate() && _selectedLocation != null) {
       setState(() {
@@ -70,9 +99,11 @@ class _DonationFormDialogState extends State<DonationFormDialog> {
       });
 
       try {
+        // Get food image URL first
+        _foodImageUrl = await _getFoodImage(_foodItemController.text);
+
         // Get the current user ID (you'll need to pass this from your auth system)
-        // TODO: Replace with actual user ID from your auth system
-        final userId = 'user123'; // Temporary user ID
+        final userId = 'user123'; // TODO: Replace with actual user ID
 
         // Create donation data
         final donationData = {
@@ -91,15 +122,36 @@ class _DonationFormDialogState extends State<DonationFormDialog> {
           'status': 'Active',
           'phoneNumber': _phoneController.text,
           'notes': _notesController.text,
+          'userId': userId,
           'createdAt': FieldValue.serverTimestamp(),
+          'imageUrl': _foodImageUrl, // Store the image URL with the donation
         };
 
-        // Add donation to Firestore under the user's document
-        await FirebaseFirestore.instance
+        // Start a batch write
+        final batch = FirebaseFirestore.instance.batch();
+
+        // Create references
+        final userDonationRef = FirebaseFirestore.instance
             .collection('donation')
             .doc(userId)
             .collection('user_donations')
-            .add(donationData);
+            .doc();
+
+        final activeDonationRef = FirebaseFirestore.instance
+            .collection('active_donations')
+            .doc(userDonationRef.id);
+
+        // Add to user's donations
+        batch.set(userDonationRef, donationData);
+
+        // Add to active donations
+        batch.set(activeDonationRef, {
+          ...donationData,
+          'donationId': userDonationRef.id,
+        });
+
+        // Commit the batch
+        await batch.commit();
 
         if (mounted) {
           Navigator.of(context).pop(true);
