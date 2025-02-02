@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:google_maps_flutter/google_maps_flutter.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:firebase_auth/firebase_auth.dart';
 import '../widgets/donation_action_dialog.dart';
 import '../widgets/donation_form_dialog.dart';
 
@@ -62,8 +63,18 @@ class _DonateScreenState extends State<DonateScreen> with SingleTickerProviderSt
 
   Future<void> _cancelDonation(String donationId) async {
     try {
-      // TODO: Replace with actual user ID from your auth system
-      final userId = 'user123';
+      final user = FirebaseAuth.instance.currentUser;
+      if (user == null) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('Please sign in to cancel donations'),
+              backgroundColor: Colors.red,
+            ),
+          );
+        }
+        return;
+      }
       
       // Show confirmation dialog
       final shouldDelete = await showDialog<bool>(
@@ -89,7 +100,7 @@ class _DonateScreenState extends State<DonateScreen> with SingleTickerProviderSt
 
       if (shouldDelete != true) return;
 
-      print('Deleting donation: $donationId for user: $userId'); // Debug log
+      print('Deleting donation: $donationId for user: ${user.uid}'); // Debug log
 
       // Start a batch write
       final batch = FirebaseFirestore.instance.batch();
@@ -97,7 +108,7 @@ class _DonateScreenState extends State<DonateScreen> with SingleTickerProviderSt
       // Create references
       final userDonationRef = FirebaseFirestore.instance
           .collection('donation')
-          .doc(userId)
+          .doc(user.uid)
           .collection('user_donations')
           .doc(donationId);
 
@@ -151,10 +162,297 @@ class _DonateScreenState extends State<DonateScreen> with SingleTickerProviderSt
     );
   }
 
+  void _showDonationDetails(Map<String, dynamic> donation) async {
+    // Show loading dialog
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (context) => const Center(
+        child: CircularProgressIndicator(),
+      ),
+    );
+
+    try {
+      // Fetch complete donation details from Firestore
+      final donationDoc = await FirebaseFirestore.instance
+          .collection('active_donations')
+          .doc(donation['id'])
+          .get();
+
+      if (!mounted) return;
+      Navigator.pop(context); // Dismiss loading dialog
+
+      if (!donationDoc.exists) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('Donation not found'),
+              backgroundColor: Colors.red,
+            ),
+          );
+        }
+        return;
+      }
+
+      final completeData = {
+        'id': donationDoc.id,
+        ...donationDoc.data() as Map<String, dynamic>,
+      };
+
+      if (!mounted) return;
+
+      // Show details dialog with complete data
+      showDialog(
+        context: context,
+        builder: (context) => Dialog(
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(20),
+          ),
+          insetPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 24),
+          child: AnimatedContainer(
+            duration: const Duration(milliseconds: 300),
+            curve: Curves.easeOut,
+            child: SingleChildScrollView(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  // Image Section with gradient overlay
+                  Stack(
+                    children: [
+                      ClipRRect(
+                        borderRadius: const BorderRadius.vertical(top: Radius.circular(20)),
+                        child: Image.network(
+                          completeData['imageUrl'] ?? 'https://firebasestorage.googleapis.com/v0/b/hunger-donatefood.appspot.com/o/default_food_image.jpg?alt=media',
+                          height: 200,
+                          width: double.infinity,
+                          fit: BoxFit.cover,
+                          errorBuilder: (context, error, stackTrace) {
+                            return Container(
+                              height: 200,
+                              color: Colors.grey[200],
+                              child: const Icon(Icons.fastfood, size: 64, color: Colors.grey),
+                            );
+                          },
+                        ),
+                      ),
+                      Positioned(
+                        top: 0,
+                        right: 0,
+                        child: IconButton(
+                          icon: const Icon(Icons.close, color: Colors.white),
+                          onPressed: () => Navigator.pop(context),
+                        ),
+                      ),
+                      Positioned(
+                        bottom: 0,
+                        left: 0,
+                        right: 0,
+                        child: Container(
+                          decoration: BoxDecoration(
+                            gradient: LinearGradient(
+                              begin: Alignment.topCenter,
+                              end: Alignment.bottomCenter,
+                              colors: [
+                                Colors.transparent,
+                                Colors.black.withOpacity(0.7),
+                              ],
+                            ),
+                          ),
+                          padding: const EdgeInsets.all(16),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                completeData['foodItem'],
+                                style: const TextStyle(
+                                  color: Colors.white,
+                                  fontSize: 24,
+                                  fontWeight: FontWeight.bold,
+                                ),
+                              ),
+                              const SizedBox(height: 4),
+                              Text(
+                                'By ${completeData['donor']}',
+                                style: const TextStyle(
+                                  color: Colors.white70,
+                                  fontSize: 16,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                  // Details Section
+                  Padding(
+                    padding: const EdgeInsets.all(16),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        _buildDetailRow(
+                          Icons.shopping_bag,
+                          'Quantity',
+                          completeData['quantity']?.toString() ?? 'N/A',
+                          Colors.blue,
+                        ),
+                        const SizedBox(height: 16),
+                        _buildDetailRow(
+                          Icons.attach_money,
+                          'Price',
+                          completeData['price']?.toString() ?? 'N/A',
+                          Colors.green,
+                        ),
+                        const SizedBox(height: 16),
+                        _buildDetailRow(
+                          Icons.access_time,
+                          'Pickup Window',
+                          '${completeData['startTime']} - ${completeData['endTime']}',
+                          Colors.orange,
+                        ),
+                        const SizedBox(height: 16),
+                        _buildDetailRow(
+                          Icons.location_on,
+                          'Location',
+                          completeData['address'] ?? 'No address provided',
+                          Colors.red,
+                        ),
+                        if (completeData['description'] != null) ...[
+                          const SizedBox(height: 16),
+                          _buildDetailRow(
+                            Icons.description,
+                            'Description',
+                            completeData['description'],
+                            Colors.purple,
+                          ),
+                        ],
+                        const SizedBox(height: 16),
+                        _buildDetailRow(
+                          Icons.calendar_today,
+                          'Created At',
+                          _formatTimestamp(completeData['createdAt']),
+                          Colors.indigo,
+                        ),
+                        if (completeData['location'] != null) ...[
+                          const SizedBox(height: 16),
+                          _buildDetailRow(
+                            Icons.pin_drop,
+                            'Coordinates',
+                            'Lat: ${completeData['location']['latitude']}, Long: ${completeData['location']['longitude']}',
+                            Colors.teal,
+                          ),
+                        ],
+                        const SizedBox(height: 24),
+                        Row(
+                          children: [
+                            Expanded(
+                              child: OutlinedButton.icon(
+                                onPressed: () {
+                                  Navigator.pop(context);
+                                  // TODO: Implement edit functionality
+                                },
+                                icon: const Icon(Icons.edit),
+                                label: const Text('Edit'),
+                                style: OutlinedButton.styleFrom(
+                                  padding: const EdgeInsets.symmetric(vertical: 12),
+                                ),
+                              ),
+                            ),
+                            const SizedBox(width: 16),
+                            Expanded(
+                              child: ElevatedButton.icon(
+                                onPressed: () {
+                                  Navigator.pop(context);
+                                  _cancelDonation(completeData['id']);
+                                },
+                                icon: const Icon(Icons.delete),
+                                label: const Text('Cancel'),
+                                style: ElevatedButton.styleFrom(
+                                  backgroundColor: Colors.red,
+                                  padding: const EdgeInsets.symmetric(vertical: 12),
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      );
+    } catch (e) {
+      Navigator.pop(context); // Dismiss loading dialog
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Error loading donation details: $e'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+    }
+  }
+
+  String _formatTimestamp(dynamic timestamp) {
+    if (timestamp == null) return 'N/A';
+    if (timestamp is Timestamp) {
+      final date = timestamp.toDate();
+      return '${date.day}/${date.month}/${date.year} ${date.hour}:${date.minute.toString().padLeft(2, '0')}';
+    }
+    return 'N/A';
+  }
+
+  Widget _buildDetailRow(IconData icon, String label, String value, Color color) {
+    return Row(
+      children: [
+        Container(
+          padding: const EdgeInsets.all(8),
+          decoration: BoxDecoration(
+            color: color.withOpacity(0.1),
+            borderRadius: BorderRadius.circular(8),
+          ),
+          child: Icon(icon, color: color, size: 20),
+        ),
+        const SizedBox(width: 12),
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                label,
+                style: TextStyle(
+                  color: Colors.grey[600],
+                  fontSize: 12,
+                ),
+              ),
+              Text(
+                value,
+                style: const TextStyle(
+                  fontSize: 16,
+                  fontWeight: FontWeight.w500,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
-    // TODO: Replace with actual user ID from your auth system
-    final userId = 'user123';
+    final user = FirebaseAuth.instance.currentUser;
+    
+    if (user == null) {
+      return const Center(
+        child: Text('Please sign in to view your donations'),
+      );
+    }
 
     return Scaffold(
       appBar: AppBar(
@@ -162,10 +460,8 @@ class _DonateScreenState extends State<DonateScreen> with SingleTickerProviderSt
       ),
       body: StreamBuilder<QuerySnapshot>(
         stream: FirebaseFirestore.instance
-            .collection('donation')
-            .doc(userId)
-            .collection('user_donations')
-            .orderBy('createdAt', descending: true)
+            .collection('active_donations')
+            .where('userId', isEqualTo: user.uid)
             .snapshots(),
         builder: (context, snapshot) {
           if (snapshot.hasError) {
@@ -233,78 +529,83 @@ class _DonateScreenState extends State<DonateScreen> with SingleTickerProviderSt
                 
                 return Card(
                   margin: const EdgeInsets.only(bottom: 16),
-                  child: Column(
-                    children: [
-                      // Add image at the top
-                      ClipRRect(
-                        borderRadius: const BorderRadius.vertical(top: Radius.circular(4)),
-                        child: Image.network(
-                          donation['imageUrl'] ?? 'https://cdn.pixabay.com/photo/2017/02/15/10/39/food-2068217_1280.jpg',
-                          height: 120,
-                          width: double.infinity,
-                          fit: BoxFit.cover,
-                          errorBuilder: (context, error, stackTrace) {
-                            return Container(
-                              height: 120,
-                              color: Colors.grey[200],
-                              child: const Icon(Icons.fastfood, size: 32, color: Colors.grey),
-                            );
-                          },
-                        ),
-                      ),
-                      ListTile(
-                        title: Text(
-                          donation['foodItem'],
-                          style: const TextStyle(
-                            fontWeight: FontWeight.bold,
-                          ),
-                        ),
-                        subtitle: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            const SizedBox(height: 4),
-                            Text('By: ${donation['donor']}'),
-                            Text('Quantity: ${donation['quantity']}'),
-                            Text('Price: ${donation['price']}'),
-                          ],
-                        ),
-                      ),
-                      Padding(
-                        padding: const EdgeInsets.symmetric(horizontal: 16),
-                        child: Row(
-                          children: [
-                            const Icon(Icons.access_time, size: 16),
-                            const SizedBox(width: 4),
-                            Text(
-                              '${donation['startTime']} - ${donation['endTime']}',
-                              style: TextStyle(
-                                color: Colors.grey[600],
-                                fontSize: 12,
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-                      ButtonBar(
-                        children: [
-                          TextButton.icon(
-                            icon: const Icon(Icons.edit),
-                            label: const Text('Edit'),
-                            onPressed: () {
-                              // TODO: Implement edit functionality
+                  child: InkWell(
+                    onTap: () => _showDonationDetails(donation),
+                    borderRadius: BorderRadius.circular(4),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        // Add image at the top
+                        ClipRRect(
+                          borderRadius: const BorderRadius.vertical(top: Radius.circular(4)),
+                          child: Image.network(
+                            donation['imageUrl'] ?? 'https://cdn.pixabay.com/photo/2017/02/15/10/39/food-2068217_1280.jpg',
+                            height: 120,
+                            width: double.infinity,
+                            fit: BoxFit.cover,
+                            errorBuilder: (context, error, stackTrace) {
+                              return Container(
+                                height: 120,
+                                color: Colors.grey[200],
+                                child: const Icon(Icons.fastfood, size: 32, color: Colors.grey),
+                              );
                             },
                           ),
-                          TextButton.icon(
-                            icon: const Icon(Icons.delete),
-                            label: const Text('Cancel'),
-                            style: TextButton.styleFrom(
-                              foregroundColor: Colors.red,
+                        ),
+                        ListTile(
+                          title: Text(
+                            donation['foodItem'],
+                            style: const TextStyle(
+                              fontWeight: FontWeight.bold,
                             ),
-                            onPressed: () => _cancelDonation(donation['id']),
                           ),
-                        ],
-                      ),
-                    ],
+                          subtitle: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              const SizedBox(height: 4),
+                              Text('By: ${donation['donor']}'),
+                              Text('Quantity: ${donation['quantity']}'),
+                              Text('Price: ${donation['price']}'),
+                            ],
+                          ),
+                        ),
+                        Padding(
+                          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                          child: Row(
+                            children: [
+                              const Icon(Icons.access_time, size: 16),
+                              const SizedBox(width: 4),
+                              Text(
+                                '${donation['startTime']} - ${donation['endTime']}',
+                                style: TextStyle(
+                                  color: Colors.grey[600],
+                                  fontSize: 12,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                        ButtonBar(
+                          children: [
+                            TextButton.icon(
+                              icon: const Icon(Icons.edit),
+                              label: const Text('Edit'),
+                              onPressed: () {
+                                // TODO: Implement edit functionality
+                              },
+                            ),
+                            TextButton.icon(
+                              icon: const Icon(Icons.delete),
+                              label: const Text('Cancel'),
+                              style: TextButton.styleFrom(
+                                foregroundColor: Colors.red,
+                              ),
+                              onPressed: () => _cancelDonation(donation['id']),
+                            ),
+                          ],
+                        ),
+                      ],
+                    ),
                   ),
                 );
               },

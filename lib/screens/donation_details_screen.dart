@@ -1,76 +1,151 @@
 import 'package:flutter/material.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
-import 'dart:convert';
-import 'package:http/http.dart' as http;
+import 'package:intl/intl.dart';
+import 'package:qr_flutter/qr_flutter.dart';
 
-class DonationDetailsScreen extends StatelessWidget {
+class DonationDetailsScreen extends StatefulWidget {
   final String donationId;
   final Map<String, dynamic> donationData;
-  final String _pixabayApiKey = '48590142-c8b8b7020e19f571b5c296fff';
 
   const DonationDetailsScreen({
-    super.key,
+    Key? key,
     required this.donationId,
     required this.donationData,
-  });
+  }) : super(key: key);
 
-  Future<String> _getFoodImage(String foodItem) async {
+  @override
+  State<DonationDetailsScreen> createState() => _DonationDetailsScreenState();
+}
+
+class _DonationDetailsScreenState extends State<DonationDetailsScreen> {
+  final TextEditingController _quantityController = TextEditingController();
+  bool _isLoading = false;
+  String? _errorMessage;
+  double _selectedQuantity = 0;
+  final double _maxQuantity = 10; // This should come from donation data
+
+  @override
+  void dispose() {
+    _quantityController.dispose();
+    super.dispose();
+  }
+
+  Future<void> _submitClaim() async {
+    final currentUser = FirebaseAuth.instance.currentUser;
+    if (currentUser == null) {
+      setState(() {
+        _errorMessage = 'Please sign in to claim donations';
+      });
+      return;
+    }
+
+    if (_selectedQuantity <= 0) {
+      setState(() {
+        _errorMessage = 'Please select a quantity';
+      });
+      return;
+    }
+
+    // Parse max quantity from donation data
+    double maxQuantity;
     try {
-      final searchTerm = Uri.encodeComponent(foodItem);
-      final response = await http.get(
-        Uri.parse(
-          'https://pixabay.com/api/?key=$_pixabayApiKey&q=$searchTerm&image_type=photo&category=food&per_page=3&safesearch=true'
-        ),
-      );
-
-      if (response.statusCode == 200) {
-        final data = json.decode(response.body);
-        if (data['hits'] != null && data['hits'].isNotEmpty) {
-          // Get the first image URL
-          return data['hits'][0]['largeImageURL'];
-        }
-      }
-      
-      // Fallback to a default food image if no results or error
-      return 'https://cdn.pixabay.com/photo/2017/02/15/10/39/food-2068217_1280.jpg';
+      final quantityStr = widget.donationData['quantity'].toString().replaceAll(RegExp(r'[^0-9.]'), '');
+      maxQuantity = double.parse(quantityStr);
     } catch (e) {
-      print('Error fetching image: $e');
-      return 'https://cdn.pixabay.com/photo/2017/02/15/10/39/food-2068217_1280.jpg';
+      maxQuantity = _maxQuantity;
+    }
+
+    if (_selectedQuantity > maxQuantity) {
+      setState(() {
+        _errorMessage = 'Selected quantity exceeds available amount';
+      });
+      return;
+    }
+
+    setState(() {
+      _isLoading = true;
+      _errorMessage = null;
+    });
+
+    try {
+      // Create a new claim request
+      final claimRequest = {
+        'donationId': widget.donationId,
+        'claimerId': currentUser.uid,
+        'claimerName': currentUser.displayName,
+        'claimerEmail': currentUser.email,
+        'quantity': _selectedQuantity.toString(),
+        'pickupTime': widget.donationData['startTime'],
+        'pickupEndTime': widget.donationData['endTime'],
+        'status': 'pending',
+        'createdAt': FieldValue.serverTimestamp(),
+        'foodItem': widget.donationData['foodItem'],
+        'donorId': widget.donationData['userId'],
+        'qrCode': null,
+      };
+
+      // Add the claim to Firestore
+      await FirebaseFirestore.instance
+          .collection('donation_claims')
+          .add(claimRequest);
+
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Claim request submitted successfully'),
+            backgroundColor: Colors.green,
+          ),
+        );
+        Navigator.pop(context);
+      }
+    } catch (e) {
+      setState(() {
+        _errorMessage = 'Failed to submit claim: $e';
+      });
+    } finally {
+      setState(() {
+        _isLoading = false;
+      });
     }
   }
 
   @override
   Widget build(BuildContext context) {
-    final currentUser = FirebaseAuth.instance.currentUser;
-    final isDonationOwner = currentUser?.uid == donationData['userId'];
-    final imageUrl = donationData['imageUrl'] ?? 'https://cdn.pixabay.com/photo/2017/02/15/10/39/food-2068217_1280.jpg';
+    final isPaid = widget.donationData['price'] != 'Free';
+    final theme = Theme.of(context);
 
     return Scaffold(
       body: CustomScrollView(
-        physics: const BouncingScrollPhysics(),
         slivers: [
-          // App Bar with Image
+          // Custom App Bar with Image
           SliverAppBar(
             expandedHeight: 300,
             pinned: true,
-            stretch: true,
             flexibleSpace: FlexibleSpaceBar(
-              stretchModes: const [
-                StretchMode.zoomBackground,
-                StretchMode.blurBackground,
-              ],
               background: Hero(
-                tag: 'food_image_${donationData['foodItem']}',
-                child: Image.network(
-                  imageUrl,
-                  fit: BoxFit.cover,
-                  errorBuilder: (context, error, stackTrace) {
-                    print('Error loading image: $error');
-                    return Container(
-                      color: Colors.grey[200],
-                      child: const Icon(Icons.fastfood, size: 100, color: Colors.grey),
-                    );
-                  },
+                tag: 'food_image_${widget.donationData['foodItem']}',
+                child: Container(
+                  decoration: BoxDecoration(
+                    image: DecorationImage(
+                      image: NetworkImage(
+                        widget.donationData['imageUrl'] ?? 'https://firebasestorage.googleapis.com/v0/b/hunger-donatefood.appspot.com/o/default_food_image.jpg?alt=media',
+                      ),
+                      fit: BoxFit.cover,
+                    ),
+                  ),
+                  child: Container(
+                    decoration: BoxDecoration(
+                      gradient: LinearGradient(
+                        begin: Alignment.topCenter,
+                        end: Alignment.bottomCenter,
+                        colors: [
+                          Colors.transparent,
+                          Colors.black.withOpacity(0.7),
+                        ],
+                      ),
+                    ),
+                  ),
                 ),
               ),
             ),
@@ -78,36 +153,28 @@ class DonationDetailsScreen extends StatelessWidget {
 
           // Content
           SliverToBoxAdapter(
-            child: TweenAnimationBuilder<double>(
-              tween: Tween(begin: 0.0, end: 1.0),
-              duration: const Duration(milliseconds: 800),
-              curve: Curves.easeOutCubic,
-              builder: (context, value, child) {
-                return Opacity(
-                  opacity: value,
-                  child: Transform.translate(
-                    offset: Offset(0, 50 * (1 - value)),
-                    child: child,
-                  ),
-                );
-              },
+            child: Container(
+              decoration: const BoxDecoration(
+                color: Colors.white,
+                borderRadius: BorderRadius.vertical(top: Radius.circular(30)),
+              ),
               child: Padding(
-                padding: const EdgeInsets.all(16),
+                padding: const EdgeInsets.all(24),
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    // Title and Price Row
+                    // Title and Price Section
                     Row(
                       mainAxisAlignment: MainAxisAlignment.spaceBetween,
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
                         Expanded(
                           child: Hero(
-                            tag: 'food_name_${donationData['foodItem']}',
+                            tag: 'food_name_${widget.donationData['foodItem']}',
                             child: Material(
                               color: Colors.transparent,
                               child: Text(
-                                donationData['foodItem'],
+                                widget.donationData['foodItem'],
                                 style: const TextStyle(
                                   fontSize: 28,
                                   fontWeight: FontWeight.bold,
@@ -117,149 +184,196 @@ class DonationDetailsScreen extends StatelessWidget {
                           ),
                         ),
                         Container(
-                          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 16,
+                            vertical: 8,
+                          ),
                           decoration: BoxDecoration(
-                            color: donationData['price'] == 'Free' 
-                                ? Colors.green.withOpacity(0.1)
-                                : Theme.of(context).primaryColor.withOpacity(0.1),
+                            color: isPaid
+                                ? theme.primaryColor.withOpacity(0.1)
+                                : Colors.green.withOpacity(0.1),
                             borderRadius: BorderRadius.circular(20),
-                            boxShadow: [
-                              BoxShadow(
-                                color: (donationData['price'] == 'Free' ? Colors.green : Theme.of(context).primaryColor).withOpacity(0.1),
-                                blurRadius: 8,
-                                offset: const Offset(0, 4),
-                              ),
-                            ],
                           ),
                           child: Text(
-                            donationData['price'],
+                            widget.donationData['price'],
                             style: TextStyle(
                               fontSize: 20,
                               fontWeight: FontWeight.bold,
-                              color: donationData['price'] == 'Free' 
-                                  ? Colors.green 
-                                  : Theme.of(context).primaryColor,
+                              color: isPaid
+                                  ? theme.primaryColor
+                                  : Colors.green,
                             ),
                           ),
                         ),
                       ],
                     ),
+                    const SizedBox(height: 16),
+
+                    // Donor Info Card
+                    Container(
+                      padding: const EdgeInsets.all(16),
+                      decoration: BoxDecoration(
+                        color: Colors.grey[100],
+                        borderRadius: BorderRadius.circular(16),
+                      ),
+                      child: Column(
+                        children: [
+                          Row(
+                            children: [
+                              CircleAvatar(
+                                backgroundColor: theme.primaryColor.withOpacity(0.1),
+                                child: Icon(Icons.person, color: theme.primaryColor),
+                              ),
+                              const SizedBox(width: 12),
+                              Expanded(
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    Text(
+                                      widget.donationData['donor'],
+                                      style: const TextStyle(
+                                        fontSize: 18,
+                                        fontWeight: FontWeight.bold,
+                                      ),
+                                    ),
+                                    Text(
+                                      'Donor',
+                                      style: TextStyle(
+                                        color: Colors.grey[600],
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                            ],
+                          ),
+                        ],
+                      ),
+                    ),
                     const SizedBox(height: 24),
 
-                    // Info Cards
-                    ...List.generate(3, (index) {
-                      final items = [
-                        {
-                          'icon': Icons.person,
-                          'color': Theme.of(context).primaryColor,
-                          'title': donationData['donor'],
-                          'subtitle': 'Donor',
-                        },
-                        {
-                          'icon': Icons.shopping_basket,
-                          'color': Colors.orange,
-                          'title': donationData['quantity'],
-                          'subtitle': 'Quantity Available',
-                        },
-                        {
-                          'icon': Icons.access_time,
-                          'color': Colors.purple,
-                          'title': '${donationData['startTime']} - ${donationData['endTime']}',
-                          'subtitle': 'Collection Time Window',
-                        },
-                      ][index];
-
-                      return TweenAnimationBuilder<double>(
-                        tween: Tween(begin: 0.0, end: 1.0),
-                        duration: Duration(milliseconds: 600 + (index * 100)),
-                        curve: Curves.easeOutCubic,
-                        builder: (context, value, child) {
-                          return Opacity(
-                            opacity: value,
-                            child: Transform.translate(
-                              offset: Offset(50 * (1 - value), 0),
-                              child: child,
-                            ),
-                          );
-                        },
-                        child: Padding(
-                          padding: const EdgeInsets.only(bottom: 16),
-                          child: Card(
-                            elevation: 0,
-                            color: Colors.grey[100],
-                            shape: RoundedRectangleBorder(
-                              borderRadius: BorderRadius.circular(16),
-                            ),
-                            child: ListTile(
-                              contentPadding: const EdgeInsets.all(16),
-                              leading: CircleAvatar(
-                                backgroundColor: items['color'] as Color,
-                                child: Icon(items['icon'] as IconData, color: Colors.white),
-                              ),
-                              title: Text(
-                                items['title'] as String,
-                                style: const TextStyle(
-                                  fontSize: 16,
-                                  fontWeight: FontWeight.bold,
+                    // Pickup Time Card
+                    Container(
+                      padding: const EdgeInsets.all(16),
+                      decoration: BoxDecoration(
+                        color: Colors.grey[100],
+                        borderRadius: BorderRadius.circular(16),
+                      ),
+                      child: Row(
+                        children: [
+                          CircleAvatar(
+                            backgroundColor: Colors.purple.withOpacity(0.1),
+                            child: const Icon(Icons.access_time, color: Colors.purple),
+                          ),
+                          const SizedBox(width: 12),
+                          Expanded(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                const Text(
+                                  'Pickup Window',
+                                  style: TextStyle(
+                                    fontSize: 16,
+                                    fontWeight: FontWeight.bold,
+                                  ),
                                 ),
-                              ),
-                              subtitle: Text(
-                                items['subtitle'] as String,
-                                style: TextStyle(
-                                  color: Colors.grey[600],
+                                const SizedBox(height: 4),
+                                Text(
+                                  '${widget.donationData['startTime']} - ${widget.donationData['endTime']}',
+                                  style: const TextStyle(
+                                    fontSize: 18,
+                                    fontWeight: FontWeight.w500,
+                                  ),
                                 ),
-                              ),
+                              ],
                             ),
                           ),
-                        ),
-                      );
-                    }),
+                        ],
+                      ),
+                    ),
+                    const SizedBox(height: 24),
 
-                    // Notes Section
-                    if (donationData['notes']?.isNotEmpty == true) ...[
-                      const SizedBox(height: 24),
-                      TweenAnimationBuilder<double>(
-                        tween: Tween(begin: 0.0, end: 1.0),
-                        duration: const Duration(milliseconds: 900),
-                        curve: Curves.easeOutCubic,
-                        builder: (context, value, child) {
-                          return Opacity(
-                            opacity: value,
-                            child: Transform.translate(
-                              offset: Offset(0, 30 * (1 - value)),
-                              child: child,
-                            ),
-                          );
-                        },
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            const Text(
-                              'Additional Notes',
-                              style: TextStyle(
-                                fontSize: 20,
-                                fontWeight: FontWeight.bold,
-                              ),
-                            ),
-                            const SizedBox(height: 12),
-                            Container(
-                              padding: const EdgeInsets.all(16),
-                              decoration: BoxDecoration(
-                                color: Colors.grey[100],
-                                borderRadius: BorderRadius.circular(16),
-                                boxShadow: [
-                                  BoxShadow(
-                                    color: Colors.black.withOpacity(0.05),
-                                    blurRadius: 10,
-                                    offset: const Offset(0, 4),
-                                  ),
-                                ],
-                              ),
-                              child: Text(
-                                donationData['notes'],
+                    // Quantity Selection
+                    const Text(
+                      'Select Quantity',
+                      style: TextStyle(
+                        fontSize: 20,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                    const SizedBox(height: 16),
+                    Container(
+                      padding: const EdgeInsets.all(16),
+                      decoration: BoxDecoration(
+                        color: Colors.grey[100],
+                        borderRadius: BorderRadius.circular(16),
+                      ),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Row(
+                            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                            children: [
+                              Text(
+                                'Available: ${widget.donationData['quantity']}',
                                 style: const TextStyle(
                                   fontSize: 16,
-                                  height: 1.5,
+                                  fontWeight: FontWeight.w500,
+                                ),
+                              ),
+                              Text(
+                                'Selected: ${_selectedQuantity.toStringAsFixed(1)}',
+                                style: TextStyle(
+                                  fontSize: 16,
+                                  fontWeight: FontWeight.w500,
+                                  color: theme.primaryColor,
+                                ),
+                              ),
+                            ],
+                          ),
+                          const SizedBox(height: 16),
+                          SliderTheme(
+                            data: SliderTheme.of(context).copyWith(
+                              activeTrackColor: theme.primaryColor,
+                              inactiveTrackColor: theme.primaryColor.withOpacity(0.1),
+                              thumbColor: theme.primaryColor,
+                              overlayColor: theme.primaryColor.withOpacity(0.2),
+                            ),
+                            child: Slider(
+                              value: _selectedQuantity,
+                              min: 0,
+                              max: _maxQuantity,
+                              divisions: 20,
+                              label: _selectedQuantity.toStringAsFixed(1),
+                              onChanged: (value) {
+                                setState(() {
+                                  _selectedQuantity = value;
+                                });
+                              },
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+
+                    if (_errorMessage != null) ...[
+                      const SizedBox(height: 16),
+                      Container(
+                        padding: const EdgeInsets.all(12),
+                        decoration: BoxDecoration(
+                          color: Colors.red.withOpacity(0.1),
+                          borderRadius: BorderRadius.circular(8),
+                        ),
+                        child: Row(
+                          children: [
+                            const Icon(Icons.error_outline, color: Colors.red),
+                            const SizedBox(width: 8),
+                            Expanded(
+                              child: Text(
+                                _errorMessage!,
+                                style: const TextStyle(
+                                  color: Colors.red,
+                                  fontSize: 14,
                                 ),
                               ),
                             ),
@@ -268,76 +382,43 @@ class DonationDetailsScreen extends StatelessWidget {
                       ),
                     ],
 
-                    const SizedBox(height: 32),
+                    const SizedBox(height: 24),
 
                     // Claim Button
-                    if (!isDonationOwner)
-                      TweenAnimationBuilder<double>(
-                        tween: Tween(begin: 0.0, end: 1.0),
-                        duration: const Duration(milliseconds: 1000),
-                        curve: Curves.elasticOut,
-                        builder: (context, value, child) {
-                          return Transform.scale(
-                            scale: value,
-                            child: child,
-                          );
-                        },
-                        child: Container(
-                          width: double.infinity,
-                          margin: const EdgeInsets.only(bottom: 16),
-                          child: ElevatedButton(
-                            onPressed: () {
-                              showDialog(
-                                context: context,
-                                builder: (context) => AlertDialog(
-                                  title: const Text('Confirm Claim'),
-                                  content: const Text('Are you sure you want to claim this donation?'),
-                                  shape: RoundedRectangleBorder(
-                                    borderRadius: BorderRadius.circular(16),
-                                  ),
-                                  actions: [
-                                    TextButton(
-                                      onPressed: () => Navigator.pop(context),
-                                      child: const Text('Cancel'),
-                                    ),
-                                    ElevatedButton(
-                                      onPressed: () {
-                                        Navigator.pop(context);
-                                        ScaffoldMessenger.of(context).showSnackBar(
-                                          const SnackBar(
-                                            content: Text('Donation claimed successfully!'),
-                                            backgroundColor: Colors.green,
-                                          ),
-                                        );
-                                      },
-                                      style: ElevatedButton.styleFrom(
-                                        backgroundColor: Theme.of(context).primaryColor,
-                                      ),
-                                      child: const Text('Confirm'),
-                                    ),
-                                  ],
-                                ),
-                              );
-                            },
-                            style: ElevatedButton.styleFrom(
-                              padding: const EdgeInsets.symmetric(vertical: 16),
-                              backgroundColor: Theme.of(context).primaryColor,
-                              foregroundColor: Colors.white,
-                              shape: RoundedRectangleBorder(
-                                borderRadius: BorderRadius.circular(16),
-                              ),
-                              elevation: 0,
-                            ),
-                            child: const Text(
-                              'Claim This Donation',
-                              style: TextStyle(
-                                fontSize: 18,
-                                fontWeight: FontWeight.bold,
-                              ),
-                            ),
+                    SizedBox(
+                      width: double.infinity,
+                      child: ElevatedButton(
+                        onPressed: _isLoading ? null : _submitClaim,
+                        style: ElevatedButton.styleFrom(
+                          padding: const EdgeInsets.symmetric(vertical: 16),
+                          backgroundColor: isPaid
+                              ? theme.primaryColor
+                              : Colors.green,
+                          foregroundColor: Colors.white,
+                          elevation: 2,
+                          shadowColor: (isPaid ? theme.primaryColor : Colors.green).withOpacity(0.3),
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(16),
                           ),
                         ),
+                        child: _isLoading
+                            ? const SizedBox(
+                                height: 24,
+                                width: 24,
+                                child: CircularProgressIndicator(
+                                  color: Colors.white,
+                                  strokeWidth: 2,
+                                ),
+                              )
+                            : Text(
+                                isPaid ? 'Buy Now' : 'Claim Now',
+                                style: const TextStyle(
+                                  fontSize: 18,
+                                  fontWeight: FontWeight.bold,
+                                ),
+                              ),
                       ),
+                    ),
                   ],
                 ),
               ),

@@ -6,6 +6,7 @@ import 'dart:convert';
 import './location_picker_dialog.dart';
 import '../services/firestore_service.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:firebase_auth/firebase_auth.dart';
 
 class DonationFormDialog extends StatefulWidget {
   const DonationFormDialog({super.key});
@@ -24,6 +25,7 @@ class _DonationFormDialogState extends State<DonationFormDialog> {
   final _addressController = TextEditingController();
   final _notesController = TextEditingController();
   final _amountController = TextEditingController();
+  final _upiIdController = TextEditingController();
 
   bool _isFree = true;
   DateTime _startTime = DateTime.now().add(const Duration(minutes: 30));
@@ -45,6 +47,7 @@ class _DonationFormDialogState extends State<DonationFormDialog> {
     _addressController.dispose();
     _notesController.dispose();
     _amountController.dispose();
+    _upiIdController.dispose();
     _mapController?.dispose();
     super.dispose();
   }
@@ -102,8 +105,11 @@ class _DonationFormDialogState extends State<DonationFormDialog> {
         // Get food image URL first
         _foodImageUrl = await _getFoodImage(_foodItemController.text);
 
-        // Get the current user ID (you'll need to pass this from your auth system)
-        final userId = 'user123'; // TODO: Replace with actual user ID
+        // Get the current user
+        final user = FirebaseAuth.instance.currentUser;
+        if (user == null) {
+          throw Exception('Please sign in to create a donation');
+        }
 
         // Create donation data
         final donationData = {
@@ -113,18 +119,20 @@ class _DonationFormDialogState extends State<DonationFormDialog> {
               ? _organizationController.text
               : _nameController.text,
           'price': _isFree ? 'Free' : '₹${_amountController.text}',
+          'upiId': !_isFree ? _upiIdController.text : null,
           'startTime': '${_startTime.hour.toString().padLeft(2, '0')}:${_startTime.minute.toString().padLeft(2, '0')}',
           'endTime': '${_endTime.hour.toString().padLeft(2, '0')}:${_endTime.minute.toString().padLeft(2, '0')}',
           'location': {
             'latitude': _selectedLocation!.latitude,
             'longitude': _selectedLocation!.longitude,
           },
+          'address': _addressController.text,
           'status': 'Active',
           'phoneNumber': _phoneController.text,
           'notes': _notesController.text,
-          'userId': userId,
+          'userId': user.uid,
           'createdAt': FieldValue.serverTimestamp(),
-          'imageUrl': _foodImageUrl, // Store the image URL with the donation
+          'imageUrl': _foodImageUrl,
         };
 
         // Start a batch write
@@ -133,7 +141,7 @@ class _DonationFormDialogState extends State<DonationFormDialog> {
         // Create references
         final userDonationRef = FirebaseFirestore.instance
             .collection('donation')
-            .doc(userId)
+            .doc(user.uid)
             .collection('user_donations')
             .doc();
 
@@ -264,6 +272,28 @@ class _DonationFormDialogState extends State<DonationFormDialog> {
                   }
                   return null;
                 },
+              ),
+              const SizedBox(height: 16),
+              TextFormField(
+                controller: _addressController,
+                decoration: const InputDecoration(
+                  labelText: 'Detailed Address',
+                  border: OutlineInputBorder(),
+                  hintText: 'Enter complete address with landmarks',
+                  prefixIcon: Icon(Icons.location_on),
+                ),
+                maxLines: 3,
+                validator: (value) {
+                  if (value == null || value.isEmpty) {
+                    return 'Please enter the complete address';
+                  }
+                  return null;
+                },
+              ),
+              const SizedBox(height: 8),
+              Text(
+                'Please provide a detailed address to help people locate your donation easily',
+                style: TextStyle(color: Colors.grey[600], fontSize: 12),
               ),
               const SizedBox(height: 16),
               Container(
@@ -444,6 +474,7 @@ class _DonationFormDialogState extends State<DonationFormDialog> {
                           _isFree = value;
                           if (value) {
                             _amountController.clear();
+                            _upiIdController.clear();
                           }
                         });
                       },
@@ -451,26 +482,56 @@ class _DonationFormDialogState extends State<DonationFormDialog> {
                     if (!_isFree) ...[
                       Padding(
                         padding: const EdgeInsets.all(16),
-                        child: TextFormField(
-                          controller: _amountController,
-                          decoration: const InputDecoration(
-                            labelText: 'Price (₹)',
-                            border: OutlineInputBorder(),
-                            prefixIcon: Icon(Icons.currency_rupee),
-                          ),
-                          keyboardType: TextInputType.number,
-                          validator: (value) {
-                            if (!_isFree) {
-                              if (value == null || value.isEmpty) {
-                                return 'Please enter the price';
-                              }
-                              final price = double.tryParse(value);
-                              if (price == null || price <= 0) {
-                                return 'Please enter a valid price';
-                              }
-                            }
-                            return null;
-                          },
+                        child: Column(
+                          children: [
+                            TextFormField(
+                              controller: _amountController,
+                              decoration: const InputDecoration(
+                                labelText: 'Price (₹)',
+                                border: OutlineInputBorder(),
+                                prefixIcon: Icon(Icons.currency_rupee),
+                              ),
+                              keyboardType: TextInputType.number,
+                              validator: (value) {
+                                if (!_isFree) {
+                                  if (value == null || value.isEmpty) {
+                                    return 'Please enter the price';
+                                  }
+                                  final price = double.tryParse(value);
+                                  if (price == null || price <= 0) {
+                                    return 'Please enter a valid price';
+                                  }
+                                }
+                                return null;
+                              },
+                            ),
+                            const SizedBox(height: 16),
+                            TextFormField(
+                              controller: _upiIdController,
+                              decoration: const InputDecoration(
+                                labelText: 'UPI ID',
+                                border: OutlineInputBorder(),
+                                prefixIcon: Icon(Icons.payment),
+                                hintText: 'example@upi',
+                              ),
+                              validator: (value) {
+                                if (!_isFree) {
+                                  if (value == null || value.isEmpty) {
+                                    return 'Please enter your UPI ID';
+                                  }
+                                  if (!value.contains('@')) {
+                                    return 'Please enter a valid UPI ID';
+                                  }
+                                }
+                                return null;
+                              },
+                            ),
+                            const SizedBox(height: 8),
+                            Text(
+                              'UPI ID will be used by receivers to make payment',
+                              style: TextStyle(color: Colors.grey[600], fontSize: 12),
+                            ),
+                          ],
                         ),
                       ),
                     ],

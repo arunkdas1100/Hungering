@@ -258,32 +258,32 @@ class _MapScreenState extends State<MapScreen> {
                 _isLoading
                     ? const Center(child: CircularProgressIndicator())
                     : GoogleMap(
-                        initialCameraPosition: CameraPosition(
-                          target: _currentPosition != null
-                              ? LatLng(_currentPosition!.latitude, _currentPosition!.longitude)
-                              : const LatLng(37.7749, -122.4194),
-                          zoom: 14,
-                        ),
-                        onMapCreated: (controller) {
-                          setState(() {
-                            _mapController = controller;
-                          });
-                        },
-                        markers: _markers,
-                        myLocationEnabled: true,
-                        myLocationButtonEnabled: true,
-                        mapType: MapType.normal,
-                        zoomControlsEnabled: true,
-                      ),
+            initialCameraPosition: CameraPosition(
+              target: _currentPosition != null
+                  ? LatLng(_currentPosition!.latitude, _currentPosition!.longitude)
+                  : const LatLng(37.7749, -122.4194),
+              zoom: 14,
+            ),
+            onMapCreated: (controller) {
+              setState(() {
+                _mapController = controller;
+              });
+            },
+            markers: _markers,
+            myLocationEnabled: true,
+            myLocationButtonEnabled: true,
+            mapType: MapType.normal,
+            zoomControlsEnabled: true,
+          ),
 
                 // Bottom Buttons
-                Positioned(
-                  left: 16,
-                  right: 16,
+          Positioned(
+            left: 16,
+            right: 16,
                   bottom: 16,
-                  child: Row(
-                    children: [
-                      Expanded(
+                    child: Row(
+                      children: [
+                        Expanded(
                         child: ElevatedButton(
                           onPressed: () {
                             // TODO: Implement claim food functionality

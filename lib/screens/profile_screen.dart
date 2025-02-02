@@ -3,6 +3,9 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:google_sign_in/google_sign_in.dart';
 import '../utils/animations.dart';
 import 'login_screen.dart';
+import 'claim_requests_screen.dart';
+import 'my_claims_screen.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
 
 class ProfileScreen extends StatefulWidget {
   const ProfileScreen({super.key});
@@ -133,6 +136,102 @@ class _ProfileScreenState extends State<ProfileScreen> with SingleTickerProvider
     );
   }
 
+  Widget _buildProfileActions() {
+    final currentUser = FirebaseAuth.instance.currentUser;
+    if (currentUser == null) return const SizedBox.shrink();
+
+    return Column(
+      children: [
+        // My Claims
+        StreamBuilder<QuerySnapshot>(
+          stream: FirebaseFirestore.instance
+              .collection('donation_claims')
+              .where('claimerId', isEqualTo: currentUser.uid)
+              .snapshots(),
+          builder: (context, snapshot) {
+            final claimsCount = snapshot.data?.docs.length ?? 0;
+            
+            return ListTile(
+              leading: const CircleAvatar(
+                backgroundColor: Colors.blue,
+                child: Icon(Icons.list_alt, color: Colors.white),
+              ),
+              title: const Text('My Claims'),
+              subtitle: Text('$claimsCount total claims'),
+              trailing: const Icon(Icons.chevron_right),
+              onTap: () {
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                    builder: (context) => const MyClaimsScreen(),
+                  ),
+                );
+              },
+            );
+          },
+        ),
+
+        // Claim Requests (only for donors)
+        StreamBuilder<QuerySnapshot>(
+          stream: FirebaseFirestore.instance
+              .collection('donation_claims')
+              .where('donorId', isEqualTo: currentUser.uid)
+              .where('status', isEqualTo: 'pending')
+              .snapshots(),
+          builder: (context, snapshot) {
+            final pendingCount = snapshot.data?.docs.length ?? 0;
+            
+            return ListTile(
+              leading: Stack(
+                children: [
+                  const CircleAvatar(
+                    backgroundColor: Colors.orange,
+                    child: Icon(Icons.notifications, color: Colors.white),
+                  ),
+                  if (pendingCount > 0)
+                    Positioned(
+                      right: 0,
+                      top: 0,
+                      child: Container(
+                        padding: const EdgeInsets.all(4),
+                        decoration: const BoxDecoration(
+                          color: Colors.red,
+                          shape: BoxShape.circle,
+                        ),
+                        child: Text(
+                          pendingCount.toString(),
+                          style: const TextStyle(
+                            color: Colors.white,
+                            fontSize: 12,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                      ),
+                    ),
+                ],
+              ),
+              title: const Text('Claim Requests'),
+              subtitle: Text(
+                pendingCount == 0
+                    ? 'No pending requests'
+                    : '$pendingCount pending requests',
+              ),
+              trailing: const Icon(Icons.chevron_right),
+              onTap: () {
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                    builder: (context) => const ClaimRequestsScreen(),
+                  ),
+                );
+              },
+            );
+          },
+        ),
+      ],
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final user = FirebaseAuth.instance.currentUser;
@@ -216,10 +315,20 @@ class _ProfileScreenState extends State<ProfileScreen> with SingleTickerProvider
                 ),
               ),
 
-              // Statistics Section with staggered animations
+              // Profile Actions
               StaggeredSlideTransition(
                 animation: _fadeAnimation,
                 index: 1,
+                child: Padding(
+                  padding: const EdgeInsets.all(20),
+                  child: _buildProfileActions(),
+                ),
+              ),
+
+              // Statistics Section with staggered animations
+              StaggeredSlideTransition(
+                animation: _fadeAnimation,
+                index: 2,
                 child: Padding(
                   padding: const EdgeInsets.all(20),
                   child: Column(
@@ -265,128 +374,57 @@ class _ProfileScreenState extends State<ProfileScreen> with SingleTickerProvider
               // Achievements Section with staggered animations
               StaggeredSlideTransition(
                 animation: _fadeAnimation,
-                index: 2,
-                child: Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 20),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      const Text(
-                        'Achievements',
-                        style: TextStyle(
-                          fontSize: 20,
-                          fontWeight: FontWeight.bold,
-                        ),
-                      ),
-                      const SizedBox(height: 16),
-                      SizedBox(
-                        height: 120,
-                        child: ListView(
-                          scrollDirection: Axis.horizontal,
-                          children: [
-                            _buildAchievementCard(
-                              'First Donation',
-                              Icons.star,
-                              Colors.amber,
-                              true,
-                            ),
-                            _buildAchievementCard(
-                              'Help 50 People',
-                              Icons.people,
-                              Colors.blue,
-                              true,
-                            ),
-                            _buildAchievementCard(
-                              'Monthly Hero',
-                              Icons.military_tech,
-                              Colors.purple,
-                              false,
-                            ),
-                            _buildAchievementCard(
-                              'Super Donor',
-                              Icons.workspace_premium,
-                              Colors.orange,
-                              false,
-                            ),
-                          ],
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-              ),
-
-              // Recent Activity Section
-              StaggeredSlideTransition(
-                animation: _fadeAnimation,
                 index: 3,
                 child: Padding(
-                  padding: const EdgeInsets.all(20),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      const Text(
-                        'Recent Activity',
-                        style: TextStyle(
-                          fontSize: 20,
-                          fontWeight: FontWeight.bold,
-                        ),
-                      ),
-                      const SizedBox(height: 16),
-                      ListView.builder(
-                        shrinkWrap: true,
-                        physics: const NeverScrollableScrollPhysics(),
-                        itemCount: 3,
-                        itemBuilder: (context, index) {
-                          final activities = [
-                            {
-                              'title': 'Donated 5 meals',
-                              'time': '2 hours ago',
-                              'icon': Icons.volunteer_activism,
-                              'color': Colors.green,
-                            },
-                            {
-                              'title': 'Earned "First Donation" badge',
-                              'time': '1 day ago',
-                              'icon': Icons.star,
-                              'color': Colors.amber,
-                            },
-                            {
-                              'title': 'Helped 3 people',
-                              'time': '2 days ago',
-                              'icon': Icons.people,
-                              'color': Colors.blue,
-                            },
-                          ];
-
-                          final activity = activities[index];
-
-                          return Card(
-                            elevation: 1,
-                            margin: const EdgeInsets.only(bottom: 12),
-                            shape: RoundedRectangleBorder(
-                              borderRadius: BorderRadius.circular(12),
-                            ),
-                            child: ListTile(
-                              leading: CircleAvatar(
-                                backgroundColor: (activity['color'] as Color).withOpacity(0.1),
-                                child: Icon(
-                                  activity['icon'] as IconData,
-                                  color: activity['color'] as Color,
-                                ),
-                              ),
-                              title: Text(activity['title'] as String),
-                              subtitle: Text(activity['time'] as String),
-                              trailing: const Icon(Icons.arrow_forward_ios, size: 16),
-                            ),
-                          );
-                        },
-                      ),
-                    ],
-                  ),
+                  padding: const EdgeInsets.symmetric(horizontal: 20),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Text(
+            'Achievements',
+            style: TextStyle(
+              fontSize: 20,
+              fontWeight: FontWeight.bold,
+            ),
+          ),
+          const SizedBox(height: 16),
+          SizedBox(
+                        height: 120,
+            child: ListView(
+              scrollDirection: Axis.horizontal,
+              children: [
+                _buildAchievementCard(
+                  'First Donation',
+                  Icons.star,
+                  Colors.amber,
+                  true,
                 ),
-              ),
-            ],
+                _buildAchievementCard(
+                  'Help 50 People',
+                  Icons.people,
+                  Colors.blue,
+                  true,
+                ),
+                _buildAchievementCard(
+                  'Monthly Hero',
+                  Icons.military_tech,
+                  Colors.purple,
+                  false,
+                ),
+                _buildAchievementCard(
+                  'Super Donor',
+                  Icons.workspace_premium,
+                  Colors.orange,
+                  false,
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+            ),
+          ),
+        ],
           ),
         ),
       ),

@@ -15,6 +15,7 @@ import '../widgets/donation_action_dialog.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'dart:math' show cos, sqrt, asin, log;
 import 'donation_details_screen.dart';
+import 'donations_list_screen.dart';
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
@@ -45,31 +46,6 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
     const RequestScreen(),
     const RecipeScreen(),
     const ProfileScreen(),
-  ];
-
-  // Example food locations (replace with real data from your backend)
-  final List<Map<String, dynamic>> _foodLocations = [
-    {
-      'id': '1',
-      'title': 'Community Fridge',
-      'type': 'fridge',
-      'position': const LatLng(37.7749, -122.4194),
-      'description': 'Available 24/7, maintained by local community',
-    },
-    {
-      'id': '2',
-      'title': 'Food Bank Central',
-      'type': 'foodbank',
-      'position': const LatLng(37.7839, -122.4084),
-      'description': 'Open Mon-Fri 9AM-5PM',
-    },
-    {
-      'id': '3',
-      'title': 'Restaurant Donation Point',
-      'type': 'restaurant',
-      'position': const LatLng(37.7939, -122.4184),
-      'description': 'Surplus food available after 8PM',
-    },
   ];
 
   @override
@@ -157,21 +133,6 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
   }
 
   void _initializeMarkers() {
-    // Add markers for food locations
-    for (var location in _foodLocations) {
-      _markers.add(
-        Marker(
-          markerId: MarkerId(location['id']),
-          position: location['position'],
-          infoWindow: InfoWindow(
-            title: location['title'],
-            snippet: location['description'],
-          ),
-          icon: _getMarkerIcon(location['type']),
-        ),
-      );
-    }
-    
     // Add current location marker if available
     if (_currentPosition != null) {
       _markers.add(
@@ -240,6 +201,9 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
     }
 
     try {
+      final currentUser = FirebaseAuth.instance.currentUser;
+      if (currentUser == null) return;
+
       final QuerySnapshot querySnapshot = await FirebaseFirestore.instance
           .collection('active_donations')
           .get();
@@ -275,11 +239,16 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
         // Check if donation is within radius
         final distance = _calculateDistance(_currentLocation!, donationLocation);
         if (distance <= _radiusInKm) {
+          // Check if this is the current user's donation
+          final isCurrentUserDonation = data['userId'] == currentUser.uid;
+
           newMarkers.add(
             Marker(
               markerId: MarkerId(doc.id),
               position: donationLocation,
-              icon: BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.hueGreen),
+              icon: isCurrentUserDonation 
+                  ? BitmapDescriptor.defaultMarker  // Black for current user's donations
+                  : BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.hueGreen),  // Green for other users' donations
               zIndex: 2,
               onTap: () {
                 showModalBottomSheet(
@@ -307,7 +276,7 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
                           child: Hero(
                             tag: 'food_image_${data['foodItem']}',
                             child: Image.network(
-                              data['imageUrl'] ?? 'https://cdn.pixabay.com/photo/2017/02/15/10/39/food-2068217_1280.jpg',
+                              data['imageUrl'] ?? 'https://firebasestorage.googleapis.com/v0/b/hunger-donatefood.appspot.com/o/default_food_image.jpg?alt=media',
                               height: 150,
                               width: double.infinity,
                               fit: BoxFit.cover,
@@ -315,7 +284,20 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
                                 return Container(
                                   height: 150,
                                   color: Colors.grey[200],
-                                  child: const Icon(Icons.fastfood, size: 50, color: Colors.grey),
+                                  child: Column(
+                                    mainAxisAlignment: MainAxisAlignment.center,
+                                    children: [
+                                      Icon(Icons.restaurant, size: 40, color: Colors.grey[400]),
+                                      const SizedBox(height: 8),
+                                      Text(
+                                        'Food Image',
+                                        style: TextStyle(
+                                          color: Colors.grey[600],
+                                          fontSize: 12,
+                                        ),
+                                      ),
+                                    ],
+                                  ),
                                 );
                               },
                             ),
@@ -459,7 +441,7 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
     Navigator.of(context).push(
       MaterialPageRoute(
         builder: (context) => Scaffold(
-          appBar: AppBar(
+      appBar: AppBar(
             title: const Text('Nearby Donations'),
             leading: IconButton(
               icon: const Icon(Icons.arrow_back),
@@ -726,7 +708,7 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
                                     builder: (context) => AlertDialog(
                                       title: const Text('Create Donation'),
                                       content: const Text('Donation creation form will be implemented here.'),
-                                      actions: [
+        actions: [
                                         TextButton(
                                           onPressed: () => Navigator.pop(context),
                                           child: const Text('Close'),
@@ -760,24 +742,27 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
                   ),
                   const SizedBox(width: 16),
                   Expanded(
-                    child: ElevatedButton(
-                      onPressed: () {
-                        setState(() {
-                          _selectedIndex = 2; // Switch to Request Screen
-                        });
+                    child: ElevatedButton.icon(
+            onPressed: () {
+                        Navigator.push(
+                          context,
+                          MaterialPageRoute(
+                            builder: (context) => const DonationsListScreen(),
+                          ),
+                        );
                       },
+                      icon: const Icon(Icons.volunteer_activism),
+                      label: const Text('Receive Food'),
                       style: ElevatedButton.styleFrom(
-                        backgroundColor: Colors.black,
+                        backgroundColor: Theme.of(context).primaryColor,
                         foregroundColor: Colors.white,
-                        padding: const EdgeInsets.symmetric(vertical: 16),
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(8),
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 24,
+                          vertical: 12,
                         ),
-                        elevation: 2,
-                      ),
-                      child: const Text(
-                        'Claim Food',
-                        style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(12),
+                        ),
                       ),
                     ),
                   ),
@@ -786,7 +771,7 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
             ),
           ),
 
-          // Available Donations Section with updated title
+          // Available Donations Section (Free items only)
           StaggeredSlideTransition(
             animation: _fadeAnimation,
             index: 3,
@@ -822,7 +807,7 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
             ),
           ),
 
-          // Nearby Locations Section
+          // New to Buy Section (Paid items only)
           StaggeredSlideTransition(
             animation: _fadeAnimation,
             index: 4,
@@ -832,42 +817,14 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   const Text(
-                    'Nearby Locations',
+                    'New to Buy',
                     style: TextStyle(
                       fontSize: 20,
                       fontWeight: FontWeight.bold,
                     ),
                   ),
                   const SizedBox(height: 16),
-                  ListView.builder(
-                    shrinkWrap: true,
-                    physics: const NeverScrollableScrollPhysics(),
-                    itemCount: _foodLocations.length,
-                    itemBuilder: (context, index) {
-                      final location = _foodLocations[index];
-                      return Card(
-                        margin: const EdgeInsets.only(bottom: 12),
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(12),
-                        ),
-                        child: ListTile(
-                          leading: CircleAvatar(
-                            backgroundColor: _getLocationColor(location['type']),
-                            child: Icon(
-                              _getLocationIcon(location['type']),
-                              color: Colors.white,
-                            ),
-                          ),
-                          title: Text(location['title']),
-                          subtitle: Text(location['description']),
-                          trailing: const Icon(Icons.arrow_forward_ios, size: 16),
-                          onTap: () {
-                            // TODO: Navigate to location details
-                          },
-                        ),
-                      );
-                    },
-                  ),
+                  _buildNewToBuy(),
                 ],
               ),
             ),
@@ -1009,70 +966,11 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
     );
   }
 
-  Widget _buildAvailableDonations() {
-    return StreamBuilder<QuerySnapshot>(
-      stream: FirebaseFirestore.instance
-          .collection('active_donations')
-          .orderBy('createdAt', descending: true)
-          .limit(5)
-          .snapshots(),
-      builder: (context, snapshot) {
-        if (snapshot.hasError) {
-          return Center(
-            child: Text(
-              'Something went wrong',
-              style: TextStyle(color: Colors.grey[600]),
-            ),
-          );
-        }
+  Widget _buildFoodDonationCard(String donationId, Map<String, dynamic> data, {bool isPaidSection = false}) {
+    final bool isPaid = data['price'] != 'Free';
+    // Don't show paid items in free section and vice versa
+    if (isPaidSection != isPaid) return const SizedBox.shrink();
 
-        if (snapshot.connectionState == ConnectionState.waiting) {
-          return const Center(
-            child: CircularProgressIndicator(),
-          );
-        }
-
-        final donations = snapshot.data?.docs ?? [];
-        
-        if (donations.isEmpty) {
-          return Center(
-            child: Column(
-              children: [
-                Icon(Icons.no_food, size: 48, color: Colors.grey[400]),
-                const SizedBox(height: 8),
-                Text(
-                  'No active donations nearby',
-                  style: TextStyle(color: Colors.grey[600]),
-                ),
-              ],
-            ),
-          );
-        }
-
-        return SizedBox(
-          height: 220, // Fixed height for the container
-          child: ListView.builder(
-            scrollDirection: Axis.horizontal,
-            physics: const BouncingScrollPhysics(),
-            itemCount: donations.length,
-            itemBuilder: (context, index) {
-              final doc = donations[index];
-              final data = doc.data() as Map<String, dynamic>;
-              return Padding(
-                padding: EdgeInsets.only(
-                  left: index == 0 ? 0 : 16,
-                  right: index == donations.length - 1 ? 0 : 0,
-                ),
-                child: _buildFoodDonationCard(doc.id, data),
-              );
-            },
-          ),
-        );
-      },
-    );
-  }
-
-  Widget _buildFoodDonationCard(String donationId, Map<String, dynamic> data) {
     return Container(
       width: 180,
       margin: const EdgeInsets.symmetric(vertical: 8),
@@ -1100,7 +998,7 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
                 borderRadius: const BorderRadius.vertical(top: Radius.circular(16)),
                 image: DecorationImage(
                   image: NetworkImage(
-                    data['imageUrl'] ?? 'https://cdn.pixabay.com/photo/2017/02/15/10/39/food-2068217_1280.jpg',
+                    data['imageUrl'] ?? 'https://firebasestorage.googleapis.com/v0/b/hunger-donatefood.appspot.com/o/default_food_image.jpg?alt=media',
                   ),
                   fit: BoxFit.cover,
                 ),
@@ -1158,7 +1056,7 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
                     ],
                   ),
 
-                  // Price and Claim Button
+                  // Price and Action Button
                   Row(
                     mainAxisAlignment: MainAxisAlignment.spaceBetween,
                     crossAxisAlignment: CrossAxisAlignment.center,
@@ -1169,9 +1067,9 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
                           vertical: 4,
                         ),
                         decoration: BoxDecoration(
-                          color: data['price'] == 'Free' 
-                              ? Colors.green.withOpacity(0.1)
-                              : Theme.of(context).primaryColor.withOpacity(0.1),
+                          color: isPaid
+                              ? Theme.of(context).primaryColor.withOpacity(0.1)
+                              : Colors.green.withOpacity(0.1),
                           borderRadius: BorderRadius.circular(12),
                         ),
                         child: Text(
@@ -1179,9 +1077,9 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
                           style: TextStyle(
                             fontSize: 12,
                             fontWeight: FontWeight.bold,
-                            color: data['price'] == 'Free' 
-                                ? Colors.green 
-                                : Theme.of(context).primaryColor,
+                            color: isPaid
+                                ? Theme.of(context).primaryColor
+                                : Colors.green,
                           ),
                         ),
                       ),
@@ -1209,9 +1107,9 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
                               color: Theme.of(context).primaryColor,
                               borderRadius: BorderRadius.circular(12),
                             ),
-                            child: const Text(
-                              'Claim',
-                              style: TextStyle(
+                            child: Text(
+                              isPaid ? 'Buy' : 'Claim',
+                              style: const TextStyle(
                                 color: Colors.white,
                                 fontSize: 12,
                                 fontWeight: FontWeight.bold,
@@ -1228,6 +1126,152 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
           ),
         ],
       ),
+    );
+  }
+
+  Widget _buildAvailableDonations() {
+    final currentUser = FirebaseAuth.instance.currentUser;
+    if (currentUser == null) return const SizedBox.shrink();
+
+    return StreamBuilder<QuerySnapshot>(
+      stream: FirebaseFirestore.instance
+          .collection('active_donations')
+          .orderBy('createdAt', descending: true)
+          .limit(5)
+          .snapshots(),
+      builder: (context, snapshot) {
+        if (snapshot.hasError) {
+          return Center(
+            child: Text(
+              'Something went wrong',
+              style: TextStyle(color: Colors.grey[600]),
+            ),
+          );
+        }
+
+        if (snapshot.connectionState == ConnectionState.waiting) {
+          return const Center(
+            child: CircularProgressIndicator(),
+          );
+        }
+
+        // Filter out current user's donations and paid donations
+        final donations = snapshot.data?.docs
+            .where((doc) {
+              final data = doc.data() as Map<String, dynamic>;
+              return data['userId'] != currentUser.uid && data['price'] == 'Free';
+            })
+            .take(5)
+            .toList() ?? [];
+        
+        if (donations.isEmpty) {
+          return Center(
+            child: Column(
+              children: [
+                Icon(Icons.no_food, size: 48, color: Colors.grey[400]),
+                const SizedBox(height: 8),
+                Text(
+                  'No active donations nearby',
+                  style: TextStyle(color: Colors.grey[600]),
+                ),
+              ],
+            ),
+          );
+        }
+
+        return SizedBox(
+          height: 220,
+          child: ListView.builder(
+            scrollDirection: Axis.horizontal,
+            physics: const BouncingScrollPhysics(),
+            itemCount: donations.length,
+            itemBuilder: (context, index) {
+              final doc = donations[index];
+              final data = doc.data() as Map<String, dynamic>;
+              return Padding(
+                padding: EdgeInsets.only(
+                  left: index == 0 ? 0 : 16,
+                  right: index == donations.length - 1 ? 0 : 0,
+                ),
+                child: _buildFoodDonationCard(doc.id, data),
+              );
+            },
+          ),
+        );
+      },
+    );
+  }
+
+  Widget _buildNewToBuy() {
+    final currentUser = FirebaseAuth.instance.currentUser;
+    if (currentUser == null) return const SizedBox.shrink();
+
+    return StreamBuilder<QuerySnapshot>(
+      stream: FirebaseFirestore.instance
+          .collection('active_donations')
+          .orderBy('createdAt', descending: true)
+          .limit(5)
+          .snapshots(),
+      builder: (context, snapshot) {
+        if (snapshot.hasError) {
+          return Center(
+            child: Text(
+              'Something went wrong',
+              style: TextStyle(color: Colors.grey[600]),
+            ),
+          );
+        }
+
+        if (snapshot.connectionState == ConnectionState.waiting) {
+          return const Center(
+            child: CircularProgressIndicator(),
+          );
+        }
+
+        // Filter for paid donations only
+        final donations = snapshot.data?.docs
+            .where((doc) {
+              final data = doc.data() as Map<String, dynamic>;
+              return data['userId'] != currentUser.uid && data['price'] != 'Free';
+            })
+            .take(5)
+            .toList() ?? [];
+        
+        if (donations.isEmpty) {
+          return Center(
+            child: Column(
+              children: [
+                Icon(Icons.shopping_bag, size: 48, color: Colors.grey[400]),
+                const SizedBox(height: 8),
+                Text(
+                  'No items available to buy',
+                  style: TextStyle(color: Colors.grey[600]),
+                ),
+              ],
+            ),
+          );
+        }
+
+        return SizedBox(
+          height: 220,
+          child: ListView.builder(
+            scrollDirection: Axis.horizontal,
+            physics: const BouncingScrollPhysics(),
+            itemCount: donations.length,
+            itemBuilder: (context, index) {
+              final doc = donations[index];
+              final data = doc.data() as Map<String, dynamic>;
+              return Padding(
+                padding: EdgeInsets.only(
+                  left: index == 0 ? 0 : 16,
+                  right: index == donations.length - 1 ? 0 : 0,
+                ),
+                child: _buildFoodDonationCard(doc.id, data, isPaidSection: true),
+              );
+            },
+          ),
+        );
+      },
     );
   }
 
