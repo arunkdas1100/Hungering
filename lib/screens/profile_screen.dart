@@ -376,7 +376,7 @@ class _ProfileScreenState extends State<ProfileScreen> with SingleTickerProvider
                 animation: _fadeAnimation,
                 index: 3,
                 child: Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 20),
+      padding: const EdgeInsets.symmetric(horizontal: 20),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
