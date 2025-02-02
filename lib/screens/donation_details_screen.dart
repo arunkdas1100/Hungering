@@ -3,15 +3,18 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:intl/intl.dart';
 import 'package:qr_flutter/qr_flutter.dart';
+import '../services/payment_service.dart';
 
 class DonationDetailsScreen extends StatefulWidget {
   final String donationId;
   final Map<String, dynamic> donationData;
+  final bool showClaimButton;
 
   const DonationDetailsScreen({
     Key? key,
     required this.donationId,
     required this.donationData,
+    this.showClaimButton = true,
   }) : super(key: key);
 
   @override
@@ -108,6 +111,102 @@ class _DonationDetailsScreenState extends State<DonationDetailsScreen> {
         _isLoading = false;
       });
     }
+  }
+
+  Future<void> _handleBuyAction() async {
+    final currentUser = FirebaseAuth.instance.currentUser;
+    if (currentUser == null) {
+      setState(() {
+        _errorMessage = 'Please sign in to make a purchase';
+      });
+      return;
+    }
+
+    if (_selectedQuantity <= 0) {
+      setState(() {
+        _errorMessage = 'Please select a quantity';
+      });
+      return;
+    }
+
+    final priceStr = widget.donationData['price'] as String;
+    if (!priceStr.startsWith('₹')) {
+      setState(() {
+        _errorMessage = 'Invalid price format';
+      });
+      return;
+    }
+    
+    final price = double.tryParse(priceStr.substring(1).trim().replaceAll(',', '')) ?? 0.0;
+    if (price <= 0) {
+      setState(() {
+        _errorMessage = 'Invalid price amount';
+      });
+      return;
+    }
+
+    setState(() {
+      _isLoading = true;
+      _errorMessage = null;
+    });
+
+    // Generate order ID
+    final orderId = 'ORDER_${DateTime.now().millisecondsSinceEpoch}';
+
+    // Initiate payment
+    final success = await PaymentService.initiatePayment(
+      context: context,
+      orderId: orderId,
+      amount: price * _selectedQuantity, // Multiply by quantity
+      itemName: widget.donationData['foodItem'],
+      customerName: currentUser.displayName ?? 'User',
+      customerEmail: currentUser.email ?? '',
+      customerPhone: widget.donationData['phoneNumber'] ?? '',
+    );
+
+    if (success && mounted) {
+      try {
+        final batch = FirebaseFirestore.instance.batch();
+        
+        // Move to completed_donations collection
+        final completedDonationRef = FirebaseFirestore.instance
+            .collection('completed_donations')
+            .doc(widget.donationId);
+            
+        batch.set(completedDonationRef, {
+          ...widget.donationData,
+          'status': 'Purchased',
+          'purchaserId': currentUser.uid,
+          'purchaserName': currentUser.displayName,
+          'purchaserEmail': currentUser.email,
+          'purchaseTime': FieldValue.serverTimestamp(),
+          'orderId': orderId,
+          'quantityPurchased': _selectedQuantity,
+          'totalAmount': price * _selectedQuantity,
+        });
+
+        // Delete from active_donations
+        final activeDonationRef = FirebaseFirestore.instance
+            .collection('active_donations')
+            .doc(widget.donationId);
+        
+        batch.delete(activeDonationRef);
+
+        await batch.commit();
+
+        // Payment success dialog and animation are handled in PaymentService
+      } catch (e) {
+        if (mounted) {
+          setState(() {
+            _errorMessage = 'Error updating order status: ${e.toString()}';
+          });
+        }
+      }
+    }
+
+    setState(() {
+      _isLoading = false;
+    });
   }
 
   @override
@@ -384,41 +483,42 @@ class _DonationDetailsScreenState extends State<DonationDetailsScreen> {
 
                     const SizedBox(height: 24),
 
-                    // Claim Button
-                    SizedBox(
-                      width: double.infinity,
-                      child: ElevatedButton(
-                        onPressed: _isLoading ? null : _submitClaim,
-                        style: ElevatedButton.styleFrom(
-                          padding: const EdgeInsets.symmetric(vertical: 16),
-                          backgroundColor: isPaid
-                              ? theme.primaryColor
-                              : Colors.green,
-                          foregroundColor: Colors.white,
-                          elevation: 2,
-                          shadowColor: (isPaid ? theme.primaryColor : Colors.green).withOpacity(0.3),
-                          shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(16),
+                    // Claim/Buy Button
+                    if (widget.showClaimButton)
+                      SizedBox(
+                        width: double.infinity,
+                        child: ElevatedButton(
+                          onPressed: _isLoading ? null : (isPaid ? _handleBuyAction : _submitClaim),
+                          style: ElevatedButton.styleFrom(
+                            padding: const EdgeInsets.symmetric(vertical: 16),
+                            backgroundColor: isPaid
+                                ? Colors.orange
+                                : Colors.green,
+                            foregroundColor: Colors.white,
+                            elevation: 2,
+                            shadowColor: (isPaid ? Colors.orange : Colors.green).withOpacity(0.3),
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(16),
+                            ),
                           ),
+                          child: _isLoading
+                              ? const SizedBox(
+                                  height: 24,
+                                  width: 24,
+                                  child: CircularProgressIndicator(
+                                    color: Colors.white,
+                                    strokeWidth: 2,
+                                  ),
+                                )
+                              : Text(
+                                  isPaid ? 'Buy Now' : 'Claim Now',
+                                  style: const TextStyle(
+                                    fontSize: 18,
+                                    fontWeight: FontWeight.bold,
+                                  ),
+                                ),
                         ),
-                        child: _isLoading
-                            ? const SizedBox(
-                                height: 24,
-                                width: 24,
-                                child: CircularProgressIndicator(
-                                  color: Colors.white,
-                                  strokeWidth: 2,
-                                ),
-                              )
-                            : Text(
-                                isPaid ? 'Buy Now' : 'Claim Now',
-                                style: const TextStyle(
-                                  fontSize: 18,
-                                  fontWeight: FontWeight.bold,
-                                ),
-                              ),
                       ),
-                    ),
                   ],
                 ),
               ),
