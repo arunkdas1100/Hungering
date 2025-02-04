@@ -6,16 +6,16 @@ import 'package:permission_handler/permission_handler.dart';
 import 'package:geocoding/geocoding.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'donate_screen.dart';
-import 'request_screen.dart';
 import 'profile_screen.dart';
-import 'feed_screen.dart';
 import '../utils/animations.dart';
-import 'recipe_screen.dart';
 import '../widgets/donation_action_dialog.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'dart:math' show cos, sqrt, asin, log;
 import 'donation_details_screen.dart';
 import 'donations_list_screen.dart';
+import 'disaster_screen.dart';
+import 'farm_assistant_screen.dart';
+import 'map_screen.dart';
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
@@ -41,10 +41,10 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
   final double _radiusInKm = 10.0;
 
   final List<Widget> _screens = [
-    const FeedScreen(),
+    const DonationsListScreen(),
     const DonateScreen(),
-    const RequestScreen(),
-    const RecipeScreen(),
+    const DisasterScreen(),
+    const FarmAssistantScreen(),
     const ProfileScreen(),
   ];
 
@@ -1343,16 +1343,16 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
             label: 'Home',
           ),
           BottomNavigationBarItem(
-            icon: Icon(Icons.volunteer_activism),
+            icon: Icon(Icons.add_circle_outline),
             label: 'Donate',
           ),
           BottomNavigationBarItem(
-            icon: Icon(Icons.food_bank),
-            label: 'Request',
+            icon: Icon(Icons.warning_rounded),
+            label: 'Disaster',
           ),
           BottomNavigationBarItem(
-            icon: Icon(Icons.restaurant_menu),
-            label: 'Recipe',
+            icon: Icon(Icons.agriculture),
+            label: 'Dr.Farm',
           ),
           BottomNavigationBarItem(
             icon: Icon(Icons.person),
